@@ -53,7 +53,36 @@ def locate_antigravity_dir():
     default_dir = Path.home() / ".gemini" / "antigravity"
     if default_dir.exists():
         return default_dir
+    default_ide = Path.home() / ".gemini" / "antigravity-ide"
+    if default_ide.exists():
+        return default_ide
     return Path.home() / ".gemini"
+
+
+def locate_brain_directories(base_dir=None):
+    brain_dirs = []
+    custom = os.environ.get("ANTIGRAVITY_DATA_DIR")
+    if custom:
+        p = Path(custom)
+        if (p / "brain").exists() and (p / "brain") not in brain_dirs:
+            brain_dirs.append(p / "brain")
+        elif p.exists() and p not in brain_dirs:
+            brain_dirs.append(p)
+
+    gemini_dir = Path.home() / ".gemini"
+    for sub in ["antigravity-ide", "antigravity", "antigravity-cli"]:
+        b = gemini_dir / sub / "brain"
+        if b.exists() and b not in brain_dirs:
+            brain_dirs.append(b)
+
+    b_direct = gemini_dir / "brain"
+    if b_direct.exists() and b_direct not in brain_dirs:
+        brain_dirs.append(b_direct)
+
+    if base_dir and (base_dir / "brain").exists() and (base_dir / "brain") not in brain_dirs:
+        brain_dirs.append(base_dir / "brain")
+
+    return brain_dirs
 
 
 def locate_ide_workspace_storage():
@@ -118,6 +147,10 @@ def discover_git_repositories(ide_workspaces, base_dir):
         Path.home() / "Projects",
         Path.home() / "src",
         Path.home() / "repos",
+        Path.home() / "dev",
+        Path.home() / "code",
+        Path.home() / "workspace",
+        Path.home() / "workspaces",
         Path.home() / "Documents",
         base_dir / "scratch"
     ]
@@ -183,22 +216,40 @@ def query_git_metadata(repo_path):
     }
 
 
-def parse_conversations(brain_dir, candidate_repos):
+def parse_conversations(brain_dirs, candidate_repos, max_conversations=50):
     sorted_repo_norms = sorted(list(candidate_repos.keys()), key=lambda x: len(x), reverse=True)
     conversations = []
+    seen_conv_ids = set()
+    conv_candidates = []
 
-    if not brain_dir.exists():
-        return conversations
+    if isinstance(brain_dirs, Path):
+        brain_dirs = [brain_dirs]
 
-    for item in brain_dir.iterdir():
-        if not item.is_dir() or item.name == "tempmediaStorage":
+    for brain_dir in brain_dirs:
+        if not brain_dir or not brain_dir.exists():
             continue
 
-        tpath = item / ".system_generated" / "logs" / "transcript.jsonl"
-        if not tpath.exists():
-            continue
+        for item in brain_dir.iterdir():
+            if not item.is_dir() or item.name == "tempmediaStorage" or item.name in seen_conv_ids:
+                continue
 
-        mtime = os.path.getmtime(item)
+            tpath = item / ".system_generated" / "logs" / "transcript.jsonl"
+            if not tpath.exists():
+                continue
+
+            seen_conv_ids.add(item.name)
+            try:
+                mtime = os.path.getmtime(item)
+                conv_candidates.append((mtime, item, tpath))
+            except Exception:
+                pass
+
+    conv_candidates.sort(key=lambda x: x[0], reverse=True)
+    total_candidates = len(conv_candidates)
+    if max_conversations and max_conversations > 0:
+        conv_candidates = conv_candidates[:max_conversations]
+
+    for mtime, item, tpath in conv_candidates:
         first_prompt = ""
         user_prompts = []
         active_ws = ""
@@ -311,39 +362,51 @@ def parse_conversations(brain_dir, candidate_repos):
             "commands": command_steps
         })
 
-    conversations.sort(key=lambda x: x["mtime"], reverse=True)
-    return conversations
+    return conversations, total_candidates
 
 
 def classify_failure(cmd, response_snippet, exit_code):
     snip = response_snippet.lower()
     cmd_lower = cmd.lower()
 
-    if "py -c" in cmd_lower or "python -c" in cmd_lower or "node -e" in cmd_lower:
+    if any(p in cmd_lower for p in ["py -c", "python -c", "node -e", "bash -c", "powershell -c"]):
         return "Inline Script Quoting Collapse"
     if "charmap" in snip or "unicodeencodeerror" in snip:
-        return "Console Encoding Trap (cp1252 / non-UTF8)"
-    if "parsererror" in snip or "syntaxerror near unexpected token" in snip:
+        return "Console Encoding Trap (Non-UTF8 Stream)"
+    if any(k in snip for k in ["parsererror", "syntaxerror near unexpected token", "unterminated quoted string", "syntaxerror: unterminated"]):
         return "Shell Parser / Quoting Error"
     if any(k in snip for k in ["command not found", "is not recognized as", "commandnotfoundexception"]):
         return "Missing Host Binary / Tool"
-    if "cannot open" in snip and "for writing" in snip or "being used by another process" in snip:
+    if any(k in snip for k in ["err_module_not_found", "cannot find module", "eresolve unable to resolve dependency tree", "err_pnpm_outdated_lockfile", "npm err!"]):
+        return "JavaScript / Node Module or Lockfile Error"
+    if any(k in snip for k in ["error ts", "tsc : error", "ts2304", "ts2307", "ts2322"]):
+        return "TypeScript Compilation / Type Check Failure"
+    if ("cannot open" in snip and "for writing" in snip) or "being used by another process" in snip or "text file busy" in snip:
         return "Process File Lock Collision"
+    if "eaddrinuse" in snip or "address already in use" in snip:
+        return "Port / Network Socket Collision"
+    if "permission denied" in snip or "eacces" in snip:
+        return "Filesystem / Permission Denied"
     if "no module named" in snip or "importerror" in snip:
         return "Missing Python Dependency / Path"
+    if any(k in snip for k in ["cargo build", "cargo check"]) and ("error[e" in snip or "failed to compile" in snip):
+        return "Rust Cargo Compilation Failure"
+    if ("go build" in cmd_lower or "go test" in cmd_lower) and ("no required module provides package" in snip or "undefined:" in snip):
+        return "Go Module / Build Failure"
     if "fatal: " in snip or "pathspec" in snip:
         return "Git Remote / Branch Safety Error"
     return f"Runtime Execution Failure (Exit Code {exit_code})"
 
 
-def run_audit(output_dir=None):
+def run_audit(output_dir=None, max_conversations=50):
     base_dir = locate_antigravity_dir()
-    brain_dir = base_dir / "brain"
+    brain_dirs = locate_brain_directories(base_dir)
     ws_storage_dir = locate_ide_workspace_storage()
 
     print(f"=== Antigravity Trajectory Auditor ===")
     print(f"Platform: {platform.system()} ({platform.machine()})")
     print(f"Antigravity Data Dir: {base_dir}")
+    print(f"Brain Storage Locations: {len(brain_dirs)}")
     print(f"IDE Storage Dir: {ws_storage_dir or 'Not found'}")
 
     ide_workspaces = discover_ide_workspaces(ws_storage_dir)
@@ -352,8 +415,8 @@ def run_audit(output_dir=None):
     candidate_repos = discover_git_repositories(ide_workspaces, base_dir)
     print(f"Discovered Git Repositories: {len(candidate_repos)}")
 
-    conversations = parse_conversations(brain_dir, candidate_repos)
-    print(f"Parsed Active Conversations: {len(conversations)}")
+    conversations, total_candidates = parse_conversations(brain_dirs, candidate_repos, max_conversations=max_conversations)
+    print(f"Parsed Active Conversations: {len(conversations)} (out of {total_candidates} discovered)")
 
     # Aggregate metrics
     total_commands = 0
@@ -415,5 +478,12 @@ def run_audit(output_dir=None):
 
 
 if __name__ == "__main__":
-    out = sys.argv[1] if len(sys.argv) > 1 else None
-    run_audit(out)
+    import argparse
+    parser = argparse.ArgumentParser(description="Trajectory Efficiency Auditor for Antigravity")
+    parser.add_argument("output_dir", nargs="?", default=None, help="Directory to save trajectory_audit_summary.json")
+    parser.add_argument("--limit", type=int, default=50, help="Max recent conversations to parse (default 50)")
+    parser.add_argument("--all", action="store_true", help="Parse all conversations without limit")
+    args = parser.parse_args()
+
+    conv_limit = None if args.all else args.limit
+    run_audit(args.output_dir, max_conversations=conv_limit)

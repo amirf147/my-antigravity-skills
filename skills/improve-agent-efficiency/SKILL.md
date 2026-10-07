@@ -9,13 +9,24 @@ This skill provides an automated, cross-platform procedure to audit agent conver
 
 ---
 
-## When to Use This Skill
+## Direct Chat Prompts
 
-Activate this skill when:
-- Reviewing agent performance across past sessions or repositories.
-- Identifying repetitive command retries, syntax errors, or tool quoting collapses.
-- Auditing token waste caused by unbounded file reads or command trial-and-error.
-- Formulating repository-specific `AGENTS.md` rules or updating global `GEMINI.md` configurations.
+When this skill is installed, the user can invoke this workflow directly from the chat interface with prompts such as:
+- *"Audit my past sessions and optimize agent rules."*
+- *"Check my command failure rate across past trajectories and update workspace AGENTS.md."*
+- *"Analyze execution friction across my projects and recommend host tooling fixes."*
+
+---
+
+## Architectural Rationale
+
+This skill splits the auditing process into two distinct phases:
+
+1. **Deterministic Log Extraction (Local Process, Zero Token Cost):**
+   Conversation histories are stored as raw JSON Lines files (`transcript.jsonl`). Reading raw transcripts directly into an LLM context window across multiple sessions exhausts context limits, costs excessive tokens, and triggers log truncation. The zero-dependency Python script parses hundreds of raw conversation logs locally in seconds, deduplicates UUIDs across storage locations, maps unlinked sessions to local Git repositories, and outputs a structured summary under 2 KB.
+
+2. **Autonomous Rule Synthesis (LLM Agent Reasoning):**
+   The agent reads the compact summary artifact, analyzes the highest-frequency failure patterns, and synthesizes repository-specific `AGENTS.md` and global `GEMINI.md` configurations.
 
 ---
 
@@ -26,12 +37,12 @@ Activate this skill when:
 Run the bundled, zero-dependency Python script to discover IDE workspaces, scan local Git repositories, parse conversation transcripts, and compute aggregate metrics:
 
 ```bash
-# Cross-platform execution
-python scripts/audit_trajectories.py "<output_directory>"
+# macOS / Linux (POSIX)
+python3 scripts/audit_trajectories.py "<output_directory>"
 ```
 
-On Windows with PowerShell:
 ```pwsh
+# Windows (PowerShell)
 py -3.10 (Join-Path $SkillDir "scripts/audit_trajectories.py") (Get-Location).Path
 ```
 
@@ -39,7 +50,7 @@ The script outputs `trajectory_audit_summary.json` containing:
 - Discovered repositories and IDE workspace access timestamps.
 - Unlabeled conversation-to-repository attribution.
 - Total command executions, failure counts, and failure rate percentage.
-- Categorized error breakdown (quoting errors, encoding traps, missing tools, process locks).
+- Categorized error breakdown across JavaScript, TypeScript, Python, Go, Rust, .NET, shell parsing, and process locks.
 
 ### Step 2: Review Unlabeled Conversation Mapping
 
@@ -55,11 +66,12 @@ Group identified failures into the primary archetypes detailed in:
 - [references/remediation_patterns.md](references/remediation_patterns.md)
 
 Common archetypes include:
-- **Inline Script Quoting Collapse:** Multi-line `python -c` or `node -e` broken by shell parsing.
+- **Inline Script Quoting Collapse:** Multi-line `python -c`, `node -e`, or nested shell commands broken by parser quotation stripping.
 - **Console Encoding Trap:** Output streams crashing on non-ASCII characters (`UnicodeEncodeError`).
 - **Missing Host Binary:** Model attempting to execute CLI utilities or runtimes absent from PATH.
-- **Missing Project Path:** `ModuleNotFoundError` due to unexported virtualenv or source directories.
-- **Process Write Lock:** Build failures caused by background daemon or test processes holding open file handles.
+- **Dependency & Module Resolution Error:** `ModuleNotFoundError`, `ERR_MODULE_NOT_FOUND`, or lockfile mismatch.
+- **Process & Port Lock Collision:** Build or server failures caused by active processes holding open file handles or network sockets (`EADDRINUSE`, `CS2012`).
+- **POSIX Permission Trap:** Shell scripts executed without executable bits (`+x`) or interpreter prefixes.
 
 ### Step 4: Synthesize Tri-Layer Remediation
 
@@ -72,7 +84,7 @@ Translate findings into concrete interventions:
    - Enforce the File-First Execution SOP for multi-line scripts.
    - Maintain bounded output limits and bounded file reading constraints.
 3. **Workspace Rules Layer (`<repo_root>/AGENTS.md`):**
-   - Codify runtime pinning, `$env:PYTHONPATH` exports, solution file targets, and pre-build process hygiene.
+   - Codify runtime pinning, package manager lockfile enforcement, test targets, and pre-build process hygiene for TypeScript, Python, Go, Rust, or .NET projects.
 
 ### Step 5: Deliver Structured Audit Artifact
 
