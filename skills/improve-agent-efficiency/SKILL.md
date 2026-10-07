@@ -27,7 +27,7 @@ The workflow operates across six distinct phases:
    When invoked without arguments, a fast inventory scan enumerates repositories and date boundaries. The agent uses `ask_question` to let the user select the target project scope and time window before deep parsing begins.
 
 2. **Host Environment Probe (Local Script):**
-   `scripts/probe_environment.py` inspects the live host runtime, verifies installed CLI binaries (`git`, `gh`, `rg`, `py -3.10`, `dotnet`, `node`, `cargo`), tests standard output stream encoding, and cross-references active rules in `GEMINI.md` to identify false negative claims.
+   `scripts/probe_environment.py` inspects the live host runtime, verifies installed CLI binaries (`git`, `gh`, `rg`, `python`, `dotnet`, `node`, `cargo`), tests standard output stream encoding, and cross-references active rules in `GEMINI.md` to identify false negative claims.
 
 3. **Causal Trajectory Mining (Local Script):**
    `scripts/audit_trajectories.py` parses conversation logs, matches sessions to repositories via dynamic git discovery, and reconstructs multi-turn incident chains (`initial failed command -> intermediate retries / file writes -> eventual working resolution`).
@@ -56,7 +56,7 @@ The workflow operates across six distinct phases:
    ```pwsh
    # Windows (PowerShell)
    $SkillScripts = "C:\Users\Amir\.gemini\config\skills\improve-agent-efficiency\scripts"
-   py -3.10 "$SkillScripts\audit_trajectories.py" (Get-Location).Path --inventory-only
+   python "$SkillScripts\audit_trajectories.py" (Get-Location).Path --inventory-only
    ```
 
    ```bash
@@ -83,8 +83,8 @@ Execute both diagnostic tools using the scoped arguments:
 ```pwsh
 # Windows (PowerShell)
 $SkillScripts = "C:\Users\Amir\.gemini\config\skills\improve-agent-efficiency\scripts"
-py -3.10 "$SkillScripts\probe_environment.py" (Get-Location).Path
-py -3.10 "$SkillScripts\audit_trajectories.py" (Get-Location).Path --since <YYYY-MM-DD> --repo <target_repo>
+python "$SkillScripts\probe_environment.py" (Get-Location).Path
+python "$SkillScripts\audit_trajectories.py" (Get-Location).Path --since <YYYY-MM-DD> --repo <target_repo>
 ```
 
 ```bash
@@ -142,7 +142,7 @@ Apply corrective measures categorized across three distinct layers:
 
 3. **Workspace Rules Layer (`<repo_root>/AGENTS.md`):**
    - Reference [references/remediation_patterns.md](references/remediation_patterns.md) for language-specific templates.
-   - Codify runtime pinning (`py -3.10`), explicit `PYTHONPATH` exports, solution file targets (`.slnx`), pre-build process termination, and test invocation commands.
+   - Codify runtime pinning (`python`), explicit `PYTHONPATH` exports, solution file targets (`.slnx`), pre-build process termination, and test invocation commands.
 
 ### Phase 5: Verification Gate
 

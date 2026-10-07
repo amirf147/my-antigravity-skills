@@ -96,11 +96,11 @@ Run the diagnostic scripts directly from the repository root:
 ```pwsh
 # Windows (PowerShell)
 # Rapid repository inventory
-py -3.10 ./skills/improve-agent-efficiency/scripts/audit_trajectories.py (Get-Location).Path --inventory-only
+python ./skills/improve-agent-efficiency/scripts/audit_trajectories.py (Get-Location).Path --inventory-only
 
 # Deep diagnostic probe & trajectory audit
-py -3.10 ./skills/improve-agent-efficiency/scripts/probe_environment.py (Get-Location).Path
-py -3.10 ./skills/improve-agent-efficiency/scripts/audit_trajectories.py (Get-Location).Path --limit 50 --exclude temp-repo
+python ./skills/improve-agent-efficiency/scripts/probe_environment.py (Get-Location).Path
+python ./skills/improve-agent-efficiency/scripts/audit_trajectories.py (Get-Location).Path --limit 50 --exclude temp-repo
 ```
 
 ```bash

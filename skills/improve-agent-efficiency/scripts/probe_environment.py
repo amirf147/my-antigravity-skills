@@ -94,7 +94,8 @@ def probe_host_binaries():
         ("pnpm", ["--version"]),
         ("npm", ["--version"]),
         ("cargo", ["--version"]),
-        ("go", ["version"])
+        ("go", ["version"]),
+        ("python", ["--version"])
     ]
 
     results = {}
@@ -103,19 +104,7 @@ def probe_host_binaries():
 
     # Windows specific Python launcher probe
     if platform.system() == "Windows":
-        py_launcher = probe_binary("py", ["--version"])
-        results["py"] = py_launcher
-        if py_launcher["installed"]:
-            # Check Python 3.10 explicitly via launcher
-            try:
-                res = subprocess.run(["py", "-3.10", "--version"], capture_output=True, text=True, timeout=3)
-                results["py_310"] = {
-                    "name": "py -3.10",
-                    "installed": res.returncode == 0,
-                    "version": res.stdout.strip() if res.returncode == 0 else "Not found"
-                }
-            except Exception:
-                results["py_310"] = {"name": "py -3.10", "installed": False, "version": None}
+        results["py"] = probe_binary("py", ["--version"])
 
     return results
 
@@ -153,7 +142,7 @@ def probe_global_configuration_discrepancies(binaries):
             })
 
     # Check for missing tools that rules require or authorize
-    for tool_name in ["rg", "git", "dotnet", "curl"]:
+    for tool_name in ["rg", "git", "dotnet", "curl", "python"]:
         if f"`{tool_name}`" in content or f" {tool_name} " in content:
             if not binaries.get(tool_name, {}).get("installed"):
                 discrepancies.append({
