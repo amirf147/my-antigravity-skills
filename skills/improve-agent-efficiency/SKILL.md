@@ -21,51 +21,87 @@ The user can invoke this workflow directly from the chat interface with prompts 
 
 ## Architecture: Fast Probing, Causal Mining, and Verified Remediation
 
-The workflow operates across five distinct phases:
+The workflow operates across six distinct phases:
 
-1. **Host Environment Probe (Local Script):**
+1. **Scoping & Discovery Gate (Interactive Selection):**
+   When invoked without arguments, a fast inventory scan enumerates repositories and date boundaries. The agent uses `ask_question` to let the user select the target project scope and time window before deep parsing begins.
+
+2. **Host Environment Probe (Local Script):**
    `scripts/probe_environment.py` inspects the live host runtime, verifies installed CLI binaries (`git`, `gh`, `rg`, `py -3.10`, `dotnet`, `node`, `cargo`), tests standard output stream encoding, and cross-references active rules in `GEMINI.md` to identify false negative claims.
 
-2. **Causal Trajectory Mining (Local Script):**
+3. **Causal Trajectory Mining (Local Script):**
    `scripts/audit_trajectories.py` parses conversation logs, matches sessions to repositories via dynamic git discovery, and reconstructs multi-turn incident chains (`initial failed command -> intermediate retries / file writes -> eventual working resolution`).
 
-3. **Targeted Forensic Sampling (Agent Reasoning):**
+4. **Targeted Forensic Sampling (Agent Reasoning):**
    For the highest-friction incident chains, the agent uses bounded `view_file` calls directly on `transcript.jsonl` to inspect the original prompt intent, raw error tracebacks, and tool execution context.
 
-4. **Tri-Layer Remediation Synthesis (Agent Execution):**
+5. **Tri-Layer Remediation Synthesis (Agent Execution):**
    Interventions are partitioned into Host Tooling (package manager installs), Global Rules (`~/.gemini/config/GEMINI.md`), and Workspace Rules (`<repo_root>/AGENTS.md`).
 
-5. **Verification Gate (Live Execution):**
+6. **Verification Gate (Live Execution):**
    All applied environment configurations, shell rules, or workspace settings are tested using verification commands before completing the turn.
 
 ---
 
 ## Operational Procedure
 
+### Phase 0: Scoping & Discovery Gate
+
+1. **Explicit Prompt Intent Check:**
+   If the user prompt already designates a target repository (e.g. *"Audit Caster"*) or specific time window (e.g. *"since last week"*), bypass the interactive prompt and execute Phase 1 directly with `--repo <name>` or `--since <date>`.
+
+2. **Rapid Inventory Discovery (< 2 seconds):**
+   If invoked bare (e.g. `/improve-agent-efficiency`), execute the rapid inventory discovery mode:
+
+   ```pwsh
+   # Windows (PowerShell)
+   $SkillScripts = "C:\Users\Amir\.gemini\config\skills\improve-agent-efficiency\scripts"
+   py -3.10 "$SkillScripts\audit_trajectories.py" (Get-Location).Path --inventory-only
+   ```
+
+   ```bash
+   # macOS / Linux (POSIX)
+   SkillScripts="$HOME/.gemini/config/skills/improve-agent-efficiency/scripts"
+   python3 "$SkillScripts/audit_trajectories.py" "$(pwd)" --inventory-only
+   ```
+
+3. **Interactive Scoping Modal (`ask_question`):**
+   Read `trajectory_inventory.json` and call `ask_question` with discovered options pre-populated:
+   - **Repository Scope:**
+     - `(Recommended) Current workspace only (<current_repo>)`
+     - `Top active repositories (<top_3_repos>)`
+     - `Full system sweep (all repositories)`
+   - **Time Window:**
+     - `(Recommended) Recent history (last 14 days)`
+     - `Medium history (last 30 days)`
+     - `Full lifetime history`
+
 ### Phase 1: Execute Host Probe and Trajectory Mining
 
-Locate the skill scripts directory and execute both diagnostic tools:
+Execute both diagnostic tools using the scoped arguments:
 
 ```pwsh
 # Windows (PowerShell)
 $SkillScripts = "C:\Users\Amir\.gemini\config\skills\improve-agent-efficiency\scripts"
 py -3.10 "$SkillScripts\probe_environment.py" (Get-Location).Path
-py -3.10 "$SkillScripts\audit_trajectories.py" (Get-Location).Path --limit 50
+py -3.10 "$SkillScripts\audit_trajectories.py" (Get-Location).Path --since <YYYY-MM-DD> --repo <target_repo>
 ```
 
 ```bash
 # macOS / Linux (POSIX)
 SkillScripts="$HOME/.gemini/config/skills/improve-agent-efficiency/scripts"
 python3 "$SkillScripts/probe_environment.py" "$(pwd)"
-python3 "$SkillScripts/audit_trajectories.py" "$(pwd)" --limit 50
+python3 "$SkillScripts/audit_trajectories.py" "$(pwd)" --since <YYYY-MM-DD> --repo <target_repo>
 ```
 
-#### Optional Mining Flags
+#### Supported Mining Flags
 - `--since YYYY-MM-DD`: Restrict audit to sessions on or after a specific date. Useful for measuring the impact of recent rule updates.
 - `--repo <keyword>`: Restrict audit to sessions associated with a specific repository name.
-- `--all`: Parse all discovered sessions across all brain storage directories without limits.
+- `--exclude <name1,name2>`: Exclude specific repositories from the audit.
+- `--all`: Parse all discovered sessions without conversation count limits.
+- `--limit <N>`: Maximum recent conversations to evaluate (default: 100).
 
-The diagnostic run produces two artifacts in the current directory:
+The diagnostic run produces two artifacts in the working directory:
 - `host_environment_probe.json`: Live binary inventory, stdout encoding status, and rule discrepancies.
 - `trajectory_audit_summary.json`: Command failure counts, repository distribution, and extracted incident chains.
 

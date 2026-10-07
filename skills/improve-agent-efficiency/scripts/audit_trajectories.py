@@ -229,7 +229,7 @@ def classify_failure(cmd, response_snippet, exit_code):
     return f"Runtime Execution Failure (Exit Code {exit_code})"
 
 
-def parse_conversations(brain_dirs, candidate_repos, max_conversations=50, since_dt=None, target_repo=None):
+def parse_conversations(brain_dirs, candidate_repos, max_conversations=50, since_dt=None, target_repo=None, exclude_repo=None):
     sorted_repo_norms = sorted(list(candidate_repos.keys()), key=lambda x: len(x), reverse=True)
     conversations = []
     seen_conv_ids = set()
@@ -392,6 +392,10 @@ def parse_conversations(brain_dirs, candidate_repos, max_conversations=50, since
         if target_repo and target_repo.lower() not in repo_display.lower():
             continue
 
+        if exclude_repo:
+            if any(ex.lower() in repo_display.lower() for ex in exclude_repo if ex):
+                continue
+
         # Mine Incident Chains: correlate initial failure -> retries/writes -> eventual success within user turn
         incident_chains = []
         commands_only = [a for a in action_trace if a["is_command"]]
@@ -466,7 +470,80 @@ def parse_conversations(brain_dirs, candidate_repos, max_conversations=50, since
     return conversations, total_candidates
 
 
-def run_audit(output_dir=None, max_conversations=50, since_date=None, target_repo=None):
+def run_inventory(output_dir=None):
+    base_dir = locate_antigravity_dir()
+    brain_dirs = locate_brain_directories(base_dir)
+    ws_storage_dir = locate_ide_workspace_storage()
+
+    ide_workspaces = discover_ide_workspaces(ws_storage_dir)
+    candidate_repos = discover_git_repositories(ide_workspaces, base_dir)
+
+    earliest_dt = None
+    latest_dt = None
+    total_convs = 0
+
+    seen_ids = set()
+    for brain_dir in brain_dirs:
+        if not brain_dir or not brain_dir.exists():
+            continue
+        for item in brain_dir.iterdir():
+            if not item.is_dir() or item.name == "tempmediaStorage" or item.name in seen_ids:
+                continue
+            tpath = item / ".system_generated" / "logs" / "transcript.jsonl"
+            if not tpath.exists():
+                continue
+            seen_ids.add(item.name)
+            total_convs += 1
+            try:
+                mtime = os.path.getmtime(tpath)
+                dt = datetime.fromtimestamp(mtime)
+                if earliest_dt is None or dt < earliest_dt:
+                    earliest_dt = dt
+                if latest_dt is None or dt > latest_dt:
+                    latest_dt = dt
+            except Exception:
+                pass
+
+    cwd_git = find_git_root(os.getcwd())
+    active_ws_display = Path(cwd_git).name if cwd_git else "General Environment"
+
+    repo_list = []
+    for r_norm, r_path in candidate_repos.items():
+        repo_list.append({
+            "name": Path(r_path).name,
+            "path": r_path
+        })
+    repo_list.sort(key=lambda x: x["name"].lower())
+
+    inventory_data = {
+        "timestamp": datetime.now().isoformat(),
+        "total_conversations": total_convs,
+        "earliest_date": earliest_dt.strftime("%Y-%m-%d") if earliest_dt else None,
+        "latest_date": latest_dt.strftime("%Y-%m-%d") if latest_dt else None,
+        "current_workspace": {
+            "name": active_ws_display,
+            "path": cwd_git
+        },
+        "discovered_repositories": repo_list
+    }
+
+    out_dir = Path(output_dir) if output_dir else Path.cwd()
+    out_file = out_dir / "trajectory_inventory.json"
+    with open(out_file, "w", encoding="utf-8") as f:
+        json.dump(inventory_data, f, indent=2)
+
+    print("=== Antigravity Trajectory Inventory ===")
+    print(f"Total Conversations Found: {total_convs}")
+    print(f"Date Range: {inventory_data['earliest_date']} to {inventory_data['latest_date']}")
+    print(f"Current Workspace: {active_ws_display} ({cwd_git or 'None'})")
+    print(f"Discovered Repositories: {len(repo_list)}")
+    for r in repo_list[:10]:
+        print(f"  - {r['name']:<25} ({r['path']})")
+    print(f"\nInventory written to: {out_file}")
+    return out_file
+
+
+def run_audit(output_dir=None, max_conversations=50, since_date=None, target_repo=None, exclude_repo=None):
     base_dir = locate_antigravity_dir()
     brain_dirs = locate_brain_directories(base_dir)
     ws_storage_dir = locate_ide_workspace_storage()
@@ -481,12 +558,20 @@ def run_audit(output_dir=None, max_conversations=50, since_date=None, target_rep
             except Exception:
                 print(f"Warning: Could not parse --since '{since_date}'. Ignoring filter.")
 
+    exclude_list = []
+    if exclude_repo:
+        if isinstance(exclude_repo, str):
+            exclude_list = [e.strip() for e in exclude_repo.split(",") if e.strip()]
+        else:
+            exclude_list = list(exclude_repo)
+
     print(f"=== Antigravity Trajectory Auditor ===")
     print(f"Platform: {platform.system()} ({platform.machine()})")
     print(f"Antigravity Data Dir: {base_dir}")
     print(f"Brain Storage Locations: {len(brain_dirs)}")
     print(f"Since Filter: {since_dt.strftime('%Y-%m-%d') if since_dt else 'None'}")
     print(f"Target Repo: {target_repo or 'All'}")
+    print(f"Exclude Repos: {', '.join(exclude_list) if exclude_list else 'None'}")
 
     ide_workspaces = discover_ide_workspaces(ws_storage_dir)
     print(f"Discovered IDE Workspaces: {len(ide_workspaces)}")
@@ -499,7 +584,8 @@ def run_audit(output_dir=None, max_conversations=50, since_date=None, target_rep
         candidate_repos=candidate_repos,
         max_conversations=max_conversations,
         since_dt=since_dt,
-        target_repo=target_repo
+        target_repo=target_repo,
+        exclude_repo=exclude_list
     )
     print(f"Parsed Active Conversations: {len(conversations)} (out of {total_candidates} matching candidates)")
 
@@ -550,6 +636,7 @@ def run_audit(output_dir=None, max_conversations=50, since_date=None, target_rep
             "platform": platform.system(),
             "since_filter": since_dt.isoformat() if since_dt else None,
             "target_repo": target_repo,
+            "exclude_filter": exclude_list,
             "total_conversations": len(conversations),
             "total_commands": total_commands,
             "total_failures": total_failures,
@@ -574,12 +661,18 @@ if __name__ == "__main__":
     parser.add_argument("--all", action="store_true", help="Parse all conversations without limit")
     parser.add_argument("--since", type=str, default=None, help="Filter to conversations on or after date (YYYY-MM-DD)")
     parser.add_argument("--repo", type=str, default=None, help="Filter to specific repository substring")
+    parser.add_argument("--exclude", type=str, default=None, help="Comma-separated repository names to exclude")
+    parser.add_argument("--inventory-only", action="store_true", help="Discover repositories and date boundaries rapidly without parsing transcripts")
     args = parser.parse_args()
 
-    conv_limit = None if args.all else args.limit
-    run_audit(
-        output_dir=args.output_dir,
-        max_conversations=conv_limit,
-        since_date=args.since,
-        target_repo=args.repo
-    )
+    if args.inventory_only:
+        run_inventory(args.output_dir)
+    else:
+        conv_limit = None if args.all else args.limit
+        run_audit(
+            output_dir=args.output_dir,
+            max_conversations=conv_limit,
+            since_date=args.since,
+            target_repo=args.repo,
+            exclude_repo=args.exclude
+        )
