@@ -1,95 +1,118 @@
 ---
 name: improve-agent-efficiency
-description: Audits past agent sessions, measures command failure rates, detects syntax collapses and missing tools, and synthesizes actionable remediation plans across native tools, global rules, and workspace AGENTS.md files.
+description: Probes host development tools, mines causal command failure chains across past agent sessions, and executes verified remediation across host binaries, global rules, and workspace AGENTS.md files.
 ---
 
 # Improve Agent Efficiency
 
-This skill provides an automated, cross-platform procedure to audit agent conversation histories in Antigravity, discover execution bottlenecks, measure command failure rates, and produce systemic remediation plans.
+This skill audits agent conversation histories in Antigravity, detects execution friction and multi-turn retry loops, probes the live host environment for tool discrepancies, and executes verified systemic remediations.
 
 ---
 
 ## Direct Chat Prompts
 
-When this skill is installed, the user can invoke this workflow directly from the chat interface with prompts such as:
+The user can invoke this workflow directly from the chat interface with prompts such as:
 - *"Audit my past sessions and optimize agent rules."*
 - *"Check my command failure rate across past trajectories and update workspace AGENTS.md."*
 - *"Analyze execution friction across my projects and recommend host tooling fixes."*
+- *"Probe my host environment and identify discrepancies in my agent configuration."*
 
 ---
 
-## Architectural Rationale
+## Architecture: Fast Probing, Causal Mining, and Verified Remediation
 
-This skill splits the auditing process into two distinct phases:
+The workflow operates across five distinct phases:
 
-1. **Deterministic Log Extraction (Local Process, Zero Token Cost):**
-   Conversation histories are stored as raw JSON Lines files (`transcript.jsonl`). Reading raw transcripts directly into an LLM context window across multiple sessions exhausts context limits, costs excessive tokens, and triggers log truncation. The zero-dependency Python script parses hundreds of raw conversation logs locally in seconds, deduplicates UUIDs across storage locations, maps unlinked sessions to local Git repositories, and outputs a structured summary under 2 KB.
+1. **Host Environment Probe (Local Script):**
+   `scripts/probe_environment.py` inspects the live host runtime, verifies installed CLI binaries (`git`, `gh`, `rg`, `py -3.10`, `dotnet`, `node`, `cargo`), tests standard output stream encoding, and cross-references active rules in `GEMINI.md` to identify false negative claims.
 
-2. **Autonomous Rule Synthesis (LLM Agent Reasoning):**
-   The agent reads the compact summary artifact, analyzes the highest-frequency failure patterns, and synthesizes repository-specific `AGENTS.md` and global `GEMINI.md` configurations.
+2. **Causal Trajectory Mining (Local Script):**
+   `scripts/audit_trajectories.py` parses conversation logs, matches sessions to repositories via dynamic git discovery, and reconstructs multi-turn incident chains (`initial failed command -> intermediate retries / file writes -> eventual working resolution`).
+
+3. **Targeted Forensic Sampling (Agent Reasoning):**
+   For the highest-friction incident chains, the agent uses bounded `view_file` calls directly on `transcript.jsonl` to inspect the original prompt intent, raw error tracebacks, and tool execution context.
+
+4. **Tri-Layer Remediation Synthesis (Agent Execution):**
+   Interventions are partitioned into Host Tooling (package manager installs), Global Rules (`~/.gemini/config/GEMINI.md`), and Workspace Rules (`<repo_root>/AGENTS.md`).
+
+5. **Verification Gate (Live Execution):**
+   All applied environment configurations, shell rules, or workspace settings are tested using verification commands before completing the turn.
 
 ---
 
-## Procedure
+## Operational Procedure
 
-### Step 1: Execute the Trajectory Auditor Script
+### Phase 1: Execute Host Probe and Trajectory Mining
 
-Run the bundled, zero-dependency Python script to discover IDE workspaces, scan local Git repositories, parse conversation transcripts, and compute aggregate metrics:
-
-```bash
-# macOS / Linux (POSIX)
-python3 scripts/audit_trajectories.py "<output_directory>"
-```
+Locate the skill scripts directory and execute both diagnostic tools:
 
 ```pwsh
 # Windows (PowerShell)
-py -3.10 (Join-Path $SkillDir "scripts/audit_trajectories.py") (Get-Location).Path
+$SkillScripts = "C:\Users\Amir\.gemini\config\skills\improve-agent-efficiency\scripts"
+py -3.10 "$SkillScripts\probe_environment.py" (Get-Location).Path
+py -3.10 "$SkillScripts\audit_trajectories.py" (Get-Location).Path --limit 50
 ```
 
-The script outputs `trajectory_audit_summary.json` containing:
-- Discovered repositories and IDE workspace access timestamps.
-- Unlabeled conversation-to-repository attribution.
-- Total command executions, failure counts, and failure rate percentage.
-- Categorized error breakdown across JavaScript, TypeScript, Python, Go, Rust, .NET, shell parsing, and process locks.
+```bash
+# macOS / Linux (POSIX)
+SkillScripts="$HOME/.gemini/config/skills/improve-agent-efficiency/scripts"
+python3 "$SkillScripts/probe_environment.py" "$(pwd)"
+python3 "$SkillScripts/audit_trajectories.py" "$(pwd)" --limit 50
+```
 
-### Step 2: Review Unlabeled Conversation Mapping
+#### Optional Mining Flags
+- `--since YYYY-MM-DD`: Restrict audit to sessions on or after a specific date. Useful for measuring the impact of recent rule updates.
+- `--repo <keyword>`: Restrict audit to sessions associated with a specific repository name.
+- `--all`: Parse all discovered sessions across all brain storage directories without limits.
 
-Verify conversation-to-repository attribution through the four-stage heuristic, particularly for sessions where IDE synchronization or ad-hoc prompts dropped workspace metadata:
-1. **Explicit Workspace Declaration:** Checked `<user_information>` in initial system prompts.
-2. **Tool Path Matching:** Longest common path prefix from `Cwd`, `TargetFile`, and `AbsolutePath` arguments.
-3. **Prompt Keyword Matching:** Basename repository matching in user input text.
-4. **General Environment Clustering:** Sessions modifying operating system configurations or unmanaged scripts.
+The diagnostic run produces two artifacts in the current directory:
+- `host_environment_probe.json`: Live binary inventory, stdout encoding status, and rule discrepancies.
+- `trajectory_audit_summary.json`: Command failure counts, repository distribution, and extracted incident chains.
 
-### Step 3: Classify Execution Friction
+### Phase 2: Review Diagnostic Outputs
 
-Group identified failures into the primary archetypes detailed in:
-- [references/remediation_patterns.md](references/remediation_patterns.md)
+Read both generated JSON artifacts using bounded file reading:
 
-Common archetypes include:
-- **Inline Script Quoting Collapse:** Multi-line `python -c`, `node -e`, or nested shell commands broken by parser quotation stripping.
-- **Console Encoding Trap:** Output streams crashing on non-ASCII characters (`UnicodeEncodeError`).
-- **Missing Host Binary:** Model attempting to execute CLI utilities or runtimes absent from PATH.
-- **Dependency & Module Resolution Error:** `ModuleNotFoundError`, `ERR_MODULE_NOT_FOUND`, or lockfile mismatch.
-- **Process & Port Lock Collision:** Build or server failures caused by active processes holding open file handles or network sockets (`EADDRINUSE`, `CS2012`).
-- **POSIX Permission Trap:** Shell scripts executed without executable bits (`+x`) or interpreter prefixes.
+1. **Inspect Host Findings:**
+   Check `host_environment_probe.json` for missing standard tools (`rg`, `gh`, `dotnet`, runtimes) and encoding errors. Flag any tools that are installed on the system but prohibited or declared absent in `GEMINI.md`.
 
-### Step 4: Synthesize Tri-Layer Remediation
+2. **Inspect High-Friction Incident Chains:**
+   Review `high_friction_incidents` in `trajectory_audit_summary.json`. Focus on incidents exhibiting:
+   - `retry_count >= 1`: Multi-step trial-and-error attempts before finding a working command.
+   - `resolved: false`: Unhandled command failures that blocked completion.
+   - `intervening_file_writes`: Cases where the agent had to write a disk script to bypass shell quoting issues.
 
-Translate findings into concrete interventions:
+### Phase 3: Targeted Forensic Sampling
+
+When an incident category shows recurring friction (such as process file locks, module import errors, or encoding crashes), sample the raw conversation log to understand the full context:
+
+1. Identify the `conversation_id` and `initial_step` from the incident record.
+2. Locate the transcript file at:
+   `<appDataDir>/brain/<conversation_id>/.system_generated/logs/transcript.jsonl`
+3. Execute bounded file inspection around the failure step index to review the exact error stack and model reasoning.
+
+### Phase 4: Tri-Layer Remediation Deployment
+
+Apply corrective measures categorized across three distinct layers:
 
 1. **Host Tooling Layer (Zero Token Overhead):**
-   - Install missing CLI binaries via native package managers (`winget`, `brew`, `apt`).
-   - Set persistent environment variables (e.g. `PYTHONIOENCODING=utf-8`).
+   - Install missing CLI utilities requested by agents using native package managers (`winget install --id <Id>`, `brew install <pkg>`).
+   - Set persistent environment variables for terminal streams (e.g., `[Environment]::SetEnvironmentVariable("PYTHONIOENCODING", "utf-8", "User")`).
+
 2. **Global Rules Layer (`~/.gemini/config/GEMINI.md`):**
-   - Enforce the File-First Execution SOP for multi-line scripts.
-   - Maintain bounded output limits and bounded file reading constraints.
+   - Correct false statements regarding installed platform binaries.
+   - Enforce the File-First Execution SOP for multi-line logic (`py -c`, `node -e`).
+   - Enforce bounded reading and bounded command output limits.
+
 3. **Workspace Rules Layer (`<repo_root>/AGENTS.md`):**
-   - Codify runtime pinning, package manager lockfile enforcement, test targets, and pre-build process hygiene for TypeScript, Python, Go, Rust, or .NET projects.
+   - Reference [references/remediation_patterns.md](references/remediation_patterns.md) for language-specific templates.
+   - Codify runtime pinning (`py -3.10`), explicit `PYTHONPATH` exports, solution file targets (`.slnx`), pre-build process termination, and test invocation commands.
 
-### Step 5: Deliver Structured Audit Artifact
+### Phase 5: Verification Gate
 
-Format the results into a markdown artifact containing:
-1. Aggregate metrics (total commands, failed commands, failure rate percentage).
-2. Per-repository failure breakdown.
-3. Master incident table (failed command, root cause, retry sequence, working command).
-4. Phased remediation plan for user review.
+Validate all applied changes before concluding the task:
+
+1. For host tool installations: Run `<binary> --version` to verify exit code 0.
+2. For environment variables: Run a test command verifying the variable is active in child processes.
+3. For workspace rules: Verify test runner commands and build commands execute cleanly against the target repository.
+4. Format findings, incident comparisons, and verified actions into a final Markdown artifact for user review.
