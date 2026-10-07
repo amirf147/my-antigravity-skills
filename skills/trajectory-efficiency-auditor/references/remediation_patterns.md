@@ -10,7 +10,7 @@ When auditing agent failures, categorize fixes into three distinct layers:
 
 ```
 Layer 1: Native Host Tools (Zero Token Cost)
-   └── If the model naturally invokes standard CLI tools (rg, gh, fd, jq), install them globally.
+   └── If transcripts show the model repeatedly invoking missing host binaries (e.g. rg, gh, fd, jq, dotnet, py), install them globally rather than forcing prompt workarounds.
 
 Layer 2: Global Configuration (~/.gemini/config/GEMINI.md)
    └── If a failure mode spans all projects (quoting collapse, output limits), enforce it globally.
@@ -37,8 +37,11 @@ Layer 3: Workspace Rules (<repo_root>/AGENTS.md)
   - On Windows, install a `sitecustomize.py` in Python `site-packages` that reconfigures `sys.stdout` to UTF-8.
 
 ### Archetype 3: Missing Host Binary
-- **Symptoms:** `The term 'rg' is not recognized`, `command not found: jq`.
-- **Root Cause:** Agent prompts or model training bias reach for standard CLI tools not installed in the PATH.
+- **Symptoms:** `The term '<binary>' is not recognized`, `command not found: <binary>`.
+- **Root Cause:** Agent prompts or model training bias reach for standard CLI tools not installed in the system PATH.
+- **Auditor Guidance:**
+  - Do not restrict inspection to hardcoded tool names. The auditor must dynamically extract whatever binary name triggered `not recognized` or `command not found` from the standard error stream.
+  - Typical examples include repository search utilities (`rg`, `fd`), platform clients (`gh`), language runtimes (`py`, `dotnet`), and data formatters (`jq`).
 - **Remediation:**
   - On Windows: `winget install --id <PackageId> --exact`
   - On macOS: `brew install <package>`

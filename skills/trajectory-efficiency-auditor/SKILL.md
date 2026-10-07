@@ -43,7 +43,7 @@ The script outputs `trajectory_audit_summary.json` containing:
 
 ### Step 2: Review Unlabeled Conversation Mapping
 
-Verify conversation-to-repository attribution through the four-stage heuristic:
+Verify conversation-to-repository attribution through the four-stage heuristic, particularly for sessions where IDE synchronization or ad-hoc prompts dropped workspace metadata:
 1. **Explicit Workspace Declaration:** Checked `<user_information>` in initial system prompts.
 2. **Tool Path Matching:** Longest common path prefix from `Cwd`, `TargetFile`, and `AbsolutePath` arguments.
 3. **Prompt Keyword Matching:** Basename repository matching in user input text.
@@ -57,7 +57,7 @@ Group identified failures into the primary archetypes detailed in:
 Common archetypes include:
 - **Inline Script Quoting Collapse:** Multi-line `python -c` or `node -e` broken by shell parsing.
 - **Console Encoding Trap:** Output streams crashing on non-ASCII characters (`UnicodeEncodeError`).
-- **Missing Host Binary:** Model reaching for tools (`rg`, `gh`, `jq`, `fd`) absent from PATH.
+- **Missing Host Binary:** Model attempting to execute CLI utilities or runtimes absent from PATH.
 - **Missing Project Path:** `ModuleNotFoundError` due to unexported virtualenv or source directories.
 - **Process Write Lock:** Build failures caused by background daemon or test processes holding open file handles.
 

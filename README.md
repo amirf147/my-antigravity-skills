@@ -38,13 +38,15 @@ This architecture ensures that rich educational documentation for human engineer
 
 ### 3.1 Background & Empirical Motivation
 
-During prolonged software development with autonomous coding agents, execution friction accumulates quietly:
-- Multi-line inline scripts (`python -c`, `node -e`) collapse under shell quotation and variable expansion rules.
-- Legacy terminal encodings (such as Windows `cp1252`) crash with `UnicodeEncodeError` when agents print non-ASCII text, foreign languages, or transcripts.
-- Missing host binaries (e.g. `rg`, `gh`, `jq`) trigger repeated trial-and-error loops.
+During software development with autonomous coding agents, execution friction accumulates across sessions:
+- Multi-line inline scripts (`python -c`, `node -e`) fail under shell quotation and variable expansion rules.
+- Legacy terminal encodings (such as Windows `cp1252`) crash with `UnicodeEncodeError` when agents output non-ASCII text.
+- Missing host binaries (such as `rg`, `gh`, or language tooling) trigger repeated trial-and-error loops.
 - Running background daemons lock output binaries, failing successive builds.
 
-This skill was synthesized after an empirical audit of 2,200 command executions across 80 Antigravity working sessions, which revealed a 12.05% baseline failure rate. By auditing past trajectories, developers can measure execution failure rates and identify missing tools or workspace rules.
+This friction directly inflates token usage. When models such as Gemini 3.8 Flash encounter shell syntax or environment errors, they enter iterative retry cycles. Each failed command invocation, error traceback, and revised escaping attempt is appended to the conversation history. In extended working sessions, these repetitive recovery attempts burn tens of thousands of working memory tokens and degrade agent reasoning capacity.
+
+This skill was synthesized after an empirical audit of 2,200 command executions across 80 Antigravity working sessions, which revealed a 12.05% baseline failure rate. Auditing past trajectories allows developers to locate repetitive command failures and eliminate their root causes through host tooling or targeted rules.
 
 ### 3.2 Core Mechanisms
 
@@ -56,7 +58,7 @@ The auditor engine ([`audit_trajectories.py`](./skills/trajectory-efficiency-aud
    - macOS: `~/Library/Application Support/Antigravity IDE/User/workspaceStorage`
    - Linux: `~/.config/Antigravity IDE/User/workspaceStorage`
 2. **Four-Tier Unlabeled Conversation Correlation:**
-   Many sessions are started in general folders or without explicit repository metadata. The auditor attributes sessions to their true Git repository using:
+   Antigravity sessions frequently lose workspace metadata or descriptive titles during external synchronization routines, profile reloads, or when started without an explicit folder context. The auditor reconstructs ground-truth repository associations using:
    - System prompt `<user_information>` workspace declarations.
    - Longest common path prefix matching from tool arguments (`Cwd`, `TargetFile`, `AbsolutePath`).
    - Repository basename matching against user prompt text.
