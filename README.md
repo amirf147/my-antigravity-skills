@@ -52,21 +52,23 @@ The skill bundles two standalone Python scripts in `scripts/`:
    - Parses local conversation transcripts across all discovered brain storage locations.
    - Reconstructs multi-turn incident chains, tracking initial command failures, subsequent retries, intervening file-write workarounds, and eventual working resolutions.
    - Dynamically resolves Git repository roots from touched file paths.
-   - Supports temporal filtering (`--since YYYY-MM-DD`) and repository targeting (`--repo <keyword>`).
-   - Writes diagnostic output to `trajectory_audit_summary.json`.
+   - Features rapid inventory scanning (`--inventory-only`) to discover date boundaries and repository footprints in seconds without parsing transcripts.
+   - Supports temporal filtering (`--since YYYY-MM-DD`), repository targeting (`--repo <keyword>`), and negative filtering (`--exclude <name1,name2>`).
+   - Writes diagnostic output to `trajectory_audit_summary.json` or `trajectory_inventory.json`.
 
-#### Five-Phase Operational Workflow
+#### Six-Phase Operational Workflow
 
-The operational procedure executes across five sequential phases:
+The operational procedure executes across six sequential phases:
 
-1. **Host Probe and Trajectory Mining:** Execute `probe_environment.py` and `audit_trajectories.py` to produce structured diagnostic artifacts.
-2. **Diagnostic Output Review:** Inspect `host_environment_probe.json` for missing tools or encoding bugs, and review high-friction incident chains in `trajectory_audit_summary.json`.
-3. **Targeted Forensic Sampling:** Perform bounded file reading on `transcript.jsonl` around failure step indices for unresolved or high-retry incidents.
-4. **Tri-Layer Remediation Deployment:**
+1. **Scoping & Discovery Gate:** Run rapid inventory scan (`--inventory-only`) and interactively select repository scope and date window before deep parsing.
+2. **Host Probe and Trajectory Mining:** Execute `probe_environment.py` and `audit_trajectories.py` to produce structured diagnostic artifacts.
+3. **Diagnostic Output Review:** Inspect `host_environment_probe.json` for missing tools or encoding bugs, and review high-friction incident chains in `trajectory_audit_summary.json`.
+4. **Targeted Forensic Sampling:** Perform bounded file reading on `transcript.jsonl` around failure step indices for unresolved or high-retry incidents.
+5. **Tri-Layer Remediation Deployment:**
    - **Host Tooling Layer:** Install missing platform binaries via native package managers (`winget`, `brew`, `apt`) and configure persistent environment variables (`PYTHONIOENCODING=utf-8`).
    - **Global Rules Layer (`~/.gemini/config/GEMINI.md`):** Correct platform binary declarations, enforce the File-First Execution SOP for multi-line logic, and maintain bounded output rules.
    - **Workspace Rules Layer (`<repo_root>/AGENTS.md`):** Enforce runtime pinning, lockfile policies, build/test commands, and pre-build process termination.
-5. **Verification Gate:** Test all applied binary installations (`<binary> --version`), environment settings, build steps, and test commands before concluding.
+6. **Verification Gate:** Test all applied binary installations (`<binary> --version`), environment settings, build steps, and test commands before concluding.
 
 #### Supported Failure Archetypes
 
@@ -93,14 +95,22 @@ Run the diagnostic scripts directly from the repository root:
 
 ```pwsh
 # Windows (PowerShell)
+# Rapid repository inventory
+py -3.10 ./skills/improve-agent-efficiency/scripts/audit_trajectories.py (Get-Location).Path --inventory-only
+
+# Deep diagnostic probe & trajectory audit
 py -3.10 ./skills/improve-agent-efficiency/scripts/probe_environment.py (Get-Location).Path
-py -3.10 ./skills/improve-agent-efficiency/scripts/audit_trajectories.py (Get-Location).Path --limit 50
+py -3.10 ./skills/improve-agent-efficiency/scripts/audit_trajectories.py (Get-Location).Path --limit 50 --exclude temp-repo
 ```
 
 ```bash
 # macOS / Linux (POSIX)
+# Rapid repository inventory
+python3 ./skills/improve-agent-efficiency/scripts/audit_trajectories.py "$(pwd)" --inventory-only
+
+# Deep diagnostic probe & trajectory audit
 python3 ./skills/improve-agent-efficiency/scripts/probe_environment.py "$(pwd)"
-python3 ./skills/improve-agent-efficiency/scripts/audit_trajectories.py "$(pwd)" --limit 50
+python3 ./skills/improve-agent-efficiency/scripts/audit_trajectories.py "$(pwd)" --limit 50 --exclude temp-repo
 ```
 
 ##### Command-Line Arguments
@@ -113,16 +123,19 @@ The `audit_trajectories.py` script supports the following filtering parameters:
 | `--limit` | Integer | `100` | Maximum number of recent conversations to parse |
 | `--since` | String (`YYYY-MM-DD`) | `None` | Restrict parsing to sessions recorded on or after this date |
 | `--repo` | String | `None` | Filter parsing to sessions matching a repository substring |
+| `--exclude` | String | `None` | Comma-separated list of repository names to exclude from parsing |
 | `--all` | Flag | `False` | Parse all discovered conversations across all storage locations |
+| `--inventory-only` | Flag | `False` | Discover repositories and date boundaries rapidly without parsing transcripts |
 
 The `probe_environment.py` script accepts an optional positional `output_dir` parameter.
 
 #### Diagnostic Artifacts
 
-The scripts generate two structured JSON artifacts in the specified output directory:
+The scripts generate structured JSON artifacts in the specified output directory:
 
 | Artifact | Generated By | Primary Contents |
 | :--- | :--- | :--- |
+| `trajectory_inventory.json` | `audit_trajectories.py --inventory-only` | Total conversation count, earliest/latest session dates, active workspace info, and list of discovered git repositories |
 | `host_environment_probe.json` | `probe_environment.py` | Platform details, Python stream encoding status, installed binary inventory, and configuration discrepancies against `GEMINI.md` |
 | `trajectory_audit_summary.json` | `audit_trajectories.py` | Aggregate command failure metrics, category breakdowns, repository distribution, and extracted incident chains |
 
