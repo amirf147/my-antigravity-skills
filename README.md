@@ -1,147 +1,71 @@
-# Antigravity Skills Library
+# My Antigravity Skills
 
-A curated repository of modular, production-grade skills for Google Antigravity (AGY) and Antigravity 2.0.
+A personal repository for custom skills used in the Antigravity IDE and the standalone Antigravity CLI application.
 
-This repository serves as a centralized source for reusable agent capabilities, diagnostic runbooks, and automation workflows that can be mounted globally across a machine or vendored into specific projects.
-
----
-
-## 1. Architectural Philosophy: Human Documentation vs. Agent Context
-
-A common concern when building a skills library is whether human-facing documentation (such as this `README.md`) consumes context tokens when an agent accesses the repository.
-
-### How Antigravity Progressive Disclosure Protects Context
-
-Antigravity employs strict progressive disclosure during skill discovery:
-
-1. **Discovery Boundary:** When Antigravity mounts a skills folder (e.g., `~/.gemini/config/skills/` or `.agents/skills/`), it scans only for subdirectories containing a `SKILL.md` file. It completely ignores root-level files such as `README.md`, `LICENSE`, or `.gitignore`.
-2. **Catalog Indexing (Zero Runbook Token Cost):** For each discovered skill, the system parses **only** the top YAML frontmatter block (`name` and `description`). The main body of `SKILL.md` is not loaded into the system prompt.
-3. **On-Demand Activation:** The agent retrieves the full instructions inside `SKILL.md` only when the user's prompt matches the skill's description or when explicitly invoked.
-4. **Encapsulated Isolation:** Each skill in `skills/<skill_name>/` is a standalone unit:
-   - `SKILL.md` contains concise, imperative operational instructions for the agent.
-   - `scripts/` contains cross-platform CLI executables.
-   - `references/` contains deep manuals or templates, which the agent reads only if a step directs it to do so.
-
-This architecture ensures that rich educational documentation for human engineers at the repository root consumes zero tokens during agent turns.
+This repository tracks reusable skills, diagnostic utilities, and execution runbooks deployed into `~/.gemini/config/skills/` (global machine scope) or `<repo_root>/.agents/skills/` (workspace scope).
 
 ---
 
-## 2. Included Skills
+## Skills Catalog
 
-| Skill | Category | Target Environments | Purpose |
+| Skill | Category | Platforms | Key Capability |
 | :--- | :--- | :--- | :--- |
 | [`trajectory-efficiency-auditor`](./skills/trajectory-efficiency-auditor/) | Diagnostics & Auditing | Windows, macOS, Linux | Audits conversation histories, correlates unlinked trajectories to repositories, detects command failures and syntax collapses, and synthesizes actionable remediation plans. |
 
 ---
 
-## 3. Deep Dive: `trajectory-efficiency-auditor`
+## Included Skills & Features
 
-### 3.1 Background & Empirical Motivation
+### `trajectory-efficiency-auditor`
 
-During software development with autonomous coding agents, execution friction accumulates across sessions:
-- Multi-line inline scripts (`python -c`, `node -e`) fail under shell quotation and variable expansion rules.
-- Legacy terminal encodings (such as Windows `cp1252`) crash with `UnicodeEncodeError` when agents output non-ASCII text.
-- Missing host binaries (such as `rg`, `gh`, or language tooling) trigger repeated trial-and-error loops.
-- Running background daemons lock output binaries, failing successive builds.
+An automated diagnostic runbook and script that inspects past agent conversation transcripts to locate command execution bottlenecks, measure failure rates, and prevent token exhaustion.
 
-This friction directly inflates token usage. When models such as Gemini 3.8 Flash encounter shell syntax or environment errors, they enter iterative retry cycles. Each failed command invocation, error traceback, and revised escaping attempt is appended to the conversation history. In extended working sessions, these repetitive recovery attempts burn tens of thousands of working memory tokens and degrade agent reasoning capacity.
+#### Features
+- **Cross-Platform Workspace Discovery:** Automatically resolves Antigravity IDE and standalone app storage paths across Windows (`%APPDATA%\Antigravity IDE\User\workspaceStorage`), macOS, and Linux without hardcoded paths.
+- **Unlabeled Session Correlation:** Uses a four-tier heuristic (workspace declarations, tool path prefixes, and prompt keyword tokens) to map orphaned or desynchronized trajectories back to their source Git repositories.
+- **Transcript Parsing & Failure Detection:** Analyzes JSON Lines logs (`transcript.jsonl`) to pair commands with process exit codes, unhandled exceptions, and shell parsing failures.
+- **Failure Classification:** Categorizes failures into standardized archetypes including inline script quotation collapse, terminal output encoding crashes (`cp1252`), missing system binaries, process file locks, and dependency path errors.
+- **Tri-Layer Remediation Model:** Translates identified failure modes into fixes across native host binaries (zero token cost), global configuration (`~/.gemini/config/GEMINI.md`), and workspace rules (`<repo_root>/AGENTS.md`).
 
-This skill was synthesized after an empirical audit of 2,200 command executions across 80 Antigravity working sessions, which revealed a 12.05% baseline failure rate. Auditing past trajectories allows developers to locate repetitive command failures and eliminate their root causes through host tooling or targeted rules.
+#### Usage
 
-### 3.2 Core Mechanisms
+Run the bundled zero-dependency Python script against the target output directory:
 
-The auditor engine ([`audit_trajectories.py`](./skills/trajectory-efficiency-auditor/scripts/audit_trajectories.py)) operates through five automated stages:
+```pwsh
+# Windows (PowerShell)
+py -3.10 ./skills/trajectory-efficiency-auditor/scripts/audit_trajectories.py (Get-Location).Path
+```
 
-1. **Cross-Platform Workspace Discovery:**
-   Dynamically locates IDE state and workspace storage without hardcoded paths:
-   - Windows: `%APPDATA%\Antigravity IDE\User\workspaceStorage`
-   - macOS: `~/Library/Application Support/Antigravity IDE/User/workspaceStorage`
-   - Linux: `~/.config/Antigravity IDE/User/workspaceStorage`
-2. **Four-Tier Unlabeled Conversation Correlation:**
-   Antigravity sessions frequently lose workspace metadata or descriptive titles during external synchronization routines, profile reloads, or when started without an explicit folder context. The auditor reconstructs ground-truth repository associations using:
-   - System prompt `<user_information>` workspace declarations.
-   - Longest common path prefix matching from tool arguments (`Cwd`, `TargetFile`, `AbsolutePath`).
-   - Repository basename matching against user prompt text.
-   - General environment fallback clustering for host configuration sessions.
-3. **Transcript Parsing & Failure Matching:**
-   Reads JSON Lines steps in `.system_generated/logs/transcript.jsonl`, pairs `run_command` invocations with exit codes and standard error streams, and detects unhandled exceptions and syntax errors.
-4. **Failure Classification:**
-   Sorts issues into seven standardized archetypes:
-   - Inline Script Quoting Collapse
-   - Console Output Encoding Trap
-   - Missing Host Tool / CLI Binary
-   - Missing Project Environment / Dependency Path
-   - Process File Lock Collision
-   - Shell Syntax / Parser Error
-   - Git Remote / Branch Safety Block
-5. **The Tri-Layer Remediation Model:**
-   Rather than treating all failures as prompt engineering problems, the skill divides solutions into three layers:
-   - **Layer 1: Native Tools (Zero Token Cost):** Install missing tools via Winget, Homebrew, or Apt.
-   - **Layer 2: Global Rules (`~/.gemini/config/GEMINI.md`):** Enforce cross-project constraints (such as File-First scripting and bounded file reading).
-   - **Layer 3: Workspace Rules (`<repo_root>/AGENTS.md`):** Codify project-specific invariants (`$env:PYTHONPATH`, solution formats, pre-build process termination).
+```bash
+# macOS / Linux (POSIX)
+python3 ./skills/trajectory-efficiency-auditor/scripts/audit_trajectories.py "$(pwd)"
+```
 
 ---
 
-## 4. Installation & Mounting Guide
+## Installation
 
-To use skills from this repository in your local Antigravity environment, choose between global mounting or project-specific vendoring.
+### Global Installation (Machine Scope)
 
-### Option A: Global Installation (Machine-Wide)
+Mount a skill globally so it is available across all workspaces in the Antigravity IDE and standalone CLI:
 
-To make a skill available across all projects and chat sessions on your machine, copy or symlink the specific skill folder into your Antigravity global configuration:
-
-#### Windows (PowerShell)
 ```pwsh
-# Copy trajectory-efficiency-auditor to global skills
+# Windows PowerShell
 $dest = "$env:USERPROFILE\.gemini\config\skills\trajectory-efficiency-auditor"
 Copy-Item -Path ".\skills\trajectory-efficiency-auditor" -Destination $dest -Recurse -Force
 ```
 
-#### macOS & Linux (Bash)
 ```bash
-# Symlink or copy to global configuration
+# macOS & Linux
 mkdir -p ~/.gemini/config/skills
 cp -r ./skills/trajectory-efficiency-auditor ~/.gemini/config/skills/
 ```
 
-### Option B: Project-Specific Vendoring (Team-Shared via Git)
+### Workspace Installation (Project Scope)
 
-To provide a skill exclusively within a specific repository, place it inside the project's `.agents/skills/` directory:
+Vendor a skill directly into a repository to share it within a specific project:
 
 ```bash
 mkdir -p <project_root>/.agents/skills
 cp -r ./skills/trajectory-efficiency-auditor <project_root>/.agents/skills/
-git add <project_root>/.agents/skills
-git commit -m "chore(agents): vendor trajectory-efficiency-auditor skill"
 ```
-
-Once placed, any agent working in that project will automatically discover the skill through hierarchical directory traversal.
-
----
-
-## 5. Standardized Skill Specification
-
-All skills in this repository adhere to the modern Antigravity Agent Skills standard:
-
-```text
-skills/<skill_name>/
-├── SKILL.md                          # Mandatory: Runbook with YAML frontmatter
-├── scripts/                          # Optional: Standalone zero-dependency scripts
-├── references/                       # Optional: Progressive disclosure manuals & templates
-└── examples/                         # Optional: Sample configurations or fixtures
-```
-
-### Frontmatter Requirements
-Every `SKILL.md` must start with valid YAML frontmatter:
-
-```yaml
----
-name: skill-name-in-kebab-case
-description: Third-person description stating both WHAT the skill does and WHEN the agent should activate it.
----
-```
-
-### Authoring Rules
-1. **Zero External Runtime Dependencies:** Scripts in `scripts/` should rely strictly on the standard library of their language (Python 3 standard library, native PowerShell 7 cmdlets, or POSIX sh).
-2. **Dynamic Path Resolution:** Never hardcode user profiles or absolute drive letters. Use dynamic home path discovery.
-3. **High Explanatory Density:** Runbooks must prioritize exact commands, directory layouts, and deterministic steps over conversational descriptions.
