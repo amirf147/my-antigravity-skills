@@ -1,11 +1,11 @@
 ---
-name: trajectory-efficiency-auditor
-description: Audits Antigravity conversation trajectories, correlates unlabeled sessions to repositories, analyzes command execution failures, and synthesizes actionable remediation plans across native tools, global rules, and workspace AGENTS.md files.
+name: improve-agent-efficiency
+description: Audits past agent sessions, measures command failure rates, detects syntax collapses and missing tools, and synthesizes actionable remediation plans across native tools, global rules, and workspace AGENTS.md files.
 ---
 
-# Trajectory Efficiency Auditor
+# Improve Agent Efficiency
 
-This skill provides an automated, cross-platform procedure to audit agent conversation histories in Antigravity, discover hidden execution bottlenecks, measure command failure rates, and produce systemic remediation plans.
+This skill provides an automated, cross-platform procedure to audit agent conversation histories in Antigravity, discover execution bottlenecks, measure command failure rates, and produce systemic remediation plans.
 
 ---
 

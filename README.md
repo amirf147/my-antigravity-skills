@@ -10,13 +10,13 @@ This repository tracks reusable skills, diagnostic utilities, and execution runb
 
 | Skill | Category | Platforms | Key Capability |
 | :--- | :--- | :--- | :--- |
-| [`trajectory-efficiency-auditor`](./skills/trajectory-efficiency-auditor/) | Diagnostics & Auditing | Windows, macOS, Linux | Audits conversation histories, correlates unlinked trajectories to repositories, detects command failures and syntax collapses, and synthesizes actionable remediation plans. |
+| [`improve-agent-efficiency`](./skills/improve-agent-efficiency/) | Diagnostics & Auditing | Windows, macOS, Linux | Audits conversation histories, correlates unlinked trajectories to repositories, detects command failures and syntax collapses, and synthesizes actionable remediation plans. |
 
 ---
 
 ## Included Skills & Features
 
-### `trajectory-efficiency-auditor`
+### `improve-agent-efficiency`
 
 An automated diagnostic runbook and script that inspects past agent conversation transcripts to locate command execution bottlenecks, measure failure rates, and prevent token exhaustion.
 
@@ -33,12 +33,12 @@ Run the bundled zero-dependency Python script against the target output director
 
 ```pwsh
 # Windows (PowerShell)
-py -3.10 ./skills/trajectory-efficiency-auditor/scripts/audit_trajectories.py (Get-Location).Path
+py -3.10 ./skills/improve-agent-efficiency/scripts/audit_trajectories.py (Get-Location).Path
 ```
 
 ```bash
 # macOS / Linux (POSIX)
-python3 ./skills/trajectory-efficiency-auditor/scripts/audit_trajectories.py "$(pwd)"
+python3 ./skills/improve-agent-efficiency/scripts/audit_trajectories.py "$(pwd)"
 ```
 
 ---
@@ -51,14 +51,14 @@ Mount a skill globally so it is available across all workspaces in the Antigravi
 
 ```pwsh
 # Windows PowerShell
-$dest = "$env:USERPROFILE\.gemini\config\skills\trajectory-efficiency-auditor"
-Copy-Item -Path ".\skills\trajectory-efficiency-auditor" -Destination $dest -Recurse -Force
+$dest = "$env:USERPROFILE\.gemini\config\skills\improve-agent-efficiency"
+Copy-Item -Path ".\skills\improve-agent-efficiency" -Destination $dest -Recurse -Force
 ```
 
 ```bash
 # macOS & Linux
 mkdir -p ~/.gemini/config/skills
-cp -r ./skills/trajectory-efficiency-auditor ~/.gemini/config/skills/
+cp -r ./skills/improve-agent-efficiency ~/.gemini/config/skills/
 ```
 
 ### Workspace Installation (Project Scope)
@@ -67,5 +67,5 @@ Vendor a skill directly into a repository to share it within a specific project:
 
 ```bash
 mkdir -p <project_root>/.agents/skills
-cp -r ./skills/trajectory-efficiency-auditor <project_root>/.agents/skills/
+cp -r ./skills/improve-agent-efficiency <project_root>/.agents/skills/
 ```
