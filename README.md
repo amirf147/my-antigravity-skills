@@ -22,7 +22,7 @@ Executing diagnostic scripts locally rather than inspecting raw transcripts insi
    Conversation transcripts are stored as raw JSON Lines files (`transcript.jsonl`) containing tool payloads, process outputs, system instructions, and user messages. Feeding unparsed session logs directly into an LLM context window consumes hundreds of thousands of tokens and causes context window truncation. The bundled scripts parse local sessions out-of-band at zero token cost.
 
 2. **Causal Incident Mining vs. LLM Estimation:**
-   Direct prompting causes the model to guess failure frequencies based on a small sample. The trajectory auditor deterministically evaluates every command step across sessions, measures exact failure percentages, and reconstructs multi-turn incident chains (`initial command failure -> retries / intervening file writes -> eventual resolution`).
+   Direct prompting causes the model to guess failure frequencies based on a small sample. The trajectory auditor deterministically evaluates every command step across sessions, measures exact failure percentages, reconstructs multi-turn incident chains (`initial command failure -> retries / intervening file writes -> eventual resolution`), and extracts causal resolution vectors by tracking working directory shifts and environment signatures.
 
 3. **Dynamic Git Root Resolution and Session Attribution:**
    Transcripts are stored by UUID. When IDE synchronization drops workspace headers, raw prompts lose their repository context. The auditor matches UUIDs back to local repositories by parsing workspace declarations, longest common path prefixes from tool arguments (`Cwd`, `TargetFile`, `AbsolutePath`), and dynamic Git root discovery.
@@ -50,7 +50,8 @@ The skill bundles two standalone Python scripts in `scripts/`:
 
 2. **Causal Trajectory Auditor (`scripts/audit_trajectories.py`):**
    - Parses local conversation transcripts across all discovered brain storage locations.
-   - Reconstructs multi-turn incident chains, tracking initial command failures, subsequent retries, intervening file-write workarounds, and eventual working resolutions.
+   - Reconstructs multi-turn incident chains, tracking initial command failures, subsequent retries, intervening file writes, working-directory shifts (`Cwd`), and eventual working resolutions.
+   - Evaluates command signatures and ranks causal resolution vectors (`CWD_CHANGE`, `INTERPRETER_OR_RUNNER_CHANGE`, `ENVIRONMENT_INLINE_SETUP`, `STATE_MUTATION`, `SYNTAX_OR_QUOTING_FIX`, `FLAG_OR_ARGUMENT_ADJUSTMENT`) while isolating unrelated diagnostic queries.
    - Dynamically resolves Git repository roots from touched file paths.
    - Features rapid inventory scanning (`--inventory-only`) to discover date boundaries and repository footprints in seconds without parsing transcripts.
    - Supports temporal filtering (`--since YYYY-MM-DD`), repository targeting (`--repo <keyword>`), and negative filtering (`--exclude <name1,name2>`).
@@ -78,6 +79,7 @@ The operational procedure executes across six sequential phases:
 - **Dependency & Module Resolution:** TypeScript module errors, `npm`/`pnpm` lockfile collisions, and Python `ModuleNotFoundError`.
 - **Process & Port Locks:** Compiler file access locks (`CS2012`) and occupied development ports (`EADDRINUSE`).
 - **POSIX Execution Traps:** Unset executable bits (`chmod +x`) and shell interpreter mismatches.
+- **Working Directory & Monorepo Path Misalignments:** Manifest resolution errors (`package.json`, `Cargo.toml`, `pyproject.toml`) or tests executed from wrong directory scope.
 
 #### Usage
 
@@ -137,7 +139,7 @@ The scripts generate structured JSON artifacts in the specified output directory
 | :--- | :--- | :--- |
 | `trajectory_inventory.json` | `audit_trajectories.py --inventory-only` | Total conversation count, earliest/latest session dates, active workspace info, and list of discovered git repositories |
 | `host_environment_probe.json` | `probe_environment.py` | Platform details, Python stream encoding status, installed binary inventory, and configuration discrepancies against `GEMINI.md` |
-| `trajectory_audit_summary.json` | `audit_trajectories.py` | Aggregate command failure metrics, category breakdowns, repository distribution, and extracted incident chains |
+| `trajectory_audit_summary.json` | `audit_trajectories.py` | Aggregate command failure metrics, category breakdowns, resolution vector distributions, working directory shifts, repository distribution, and extracted incident chains |
 
 ---
 
