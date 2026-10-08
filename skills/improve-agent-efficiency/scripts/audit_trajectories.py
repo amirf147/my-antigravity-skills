@@ -229,6 +229,112 @@ def classify_failure(cmd, response_snippet, exit_code):
     return f"Runtime Execution Failure (Exit Code {exit_code})"
 
 
+def extract_command_signature(cmd_str):
+    """
+    Extracts the root tool domain, runner prefix, environment inline setup, and core executable binary.
+    """
+    cmd = clean_str(cmd_str)
+    if not cmd:
+        return {"domain": "unknown", "runner": "", "binary": "", "has_env": False, "raw": ""}
+
+    has_env = bool(re.search(r'(\$env:\w+|^\w+=\S+|export\s+\w+|source\s+|activate)', cmd, re.IGNORECASE))
+    clean_cmd = re.sub(r'^\s*&\s*', '', cmd).strip()
+
+    runner = ""
+    for r in [
+        "uv run", "pnpm exec", "pnpm", "npx", "yarn", "bun",
+        "py -3.10", "py -3.11", "py -3.12", "py -3.9", "py -3.8", "py -3",
+        "python -m", "py -m", "pwsh -Command", "powershell -Command"
+    ]:
+        if clean_cmd.lower().startswith(r.lower()):
+            runner = r
+            break
+
+    domain = "generic"
+    cmd_lower = clean_cmd.lower()
+    if any(k in cmd_lower for k in ["cargo", "rustc", "clippy"]):
+        domain = "cargo"
+    elif any(k in cmd_lower for k in ["pytest", "python", "py ", "pip", "uv", ".venv", "site-packages"]):
+        domain = "python"
+    elif any(k in cmd_lower for k in ["npm", "pnpm", "yarn", "bun", "node", "tsc", "vite", "next"]):
+        domain = "node"
+    elif any(k in cmd_lower for k in ["dotnet", "msbuild", "nuget", "csharp"]):
+        domain = "dotnet"
+    elif any(k in cmd_lower for k in ["go ", "go.exe", "gofmt"]):
+        domain = "go"
+    elif any(k in cmd_lower for k in ["git ", "git.exe", "gh "]):
+        domain = "git"
+    elif any(k in cmd_lower for k in ["rg ", "rg.exe", "ripgrep", "grep", "select-string", "findstr"]):
+        domain = "search"
+    elif any(k in cmd_lower for k in ["dir", "ls", "get-childitem", "cat", "get-content", "type "]):
+        domain = "discovery"
+
+    tokens = clean_cmd.split()
+    primary_bin = Path(tokens[0]).name.lower() if tokens else ""
+
+    return {
+        "domain": domain,
+        "runner": runner,
+        "binary": primary_bin,
+        "has_env": has_env,
+        "raw": cmd
+    }
+
+
+def classify_resolution_vector(initial_act, working_act, intervening_writes, intervening_cmds):
+    """
+    Deterministically ranks the causal resolution mechanism between a failed command and a subsequent working command.
+    """
+    init_cmd = initial_act["command"]
+    work_cmd = working_act["command"]
+    init_cwd = initial_act["cwd"]
+    work_cwd = working_act["cwd"]
+
+    init_sig = extract_command_signature(init_cmd)
+    work_sig = extract_command_signature(work_cmd)
+
+    # Filter out unrelated discovery or VCS commands executed during diagnostics
+    if init_sig["domain"] in ["cargo", "python", "node", "dotnet", "go"] and work_sig["domain"] in ["git", "search", "discovery"]:
+        return "UNRELATED_PIVOT_OR_DISCOVERY", False
+
+    cwd_changed = False
+    if init_cwd and work_cwd:
+        if norm_path(init_cwd) != norm_path(work_cwd):
+            cwd_changed = True
+
+    env_added = (not init_sig["has_env"]) and work_sig["has_env"]
+
+    runner_changed = False
+    if init_sig["runner"] != work_sig["runner"] and (work_sig["runner"] or init_sig["runner"]):
+        runner_changed = True
+    elif init_sig["binary"] != work_sig["binary"] and (init_sig["domain"] == work_sig["domain"]):
+        runner_changed = True
+
+    has_state_mutation = len(intervening_writes) > 0
+    for icmd in intervening_cmds:
+        icmd_lower = icmd.lower()
+        if any(p in icmd_lower for p in ["install", "restore", "build", "stop-process", "kill", "pkill", "pip", "winget", "dotnet restore", "go mod tidy"]):
+            has_state_mutation = True
+            break
+
+    if cwd_changed:
+        return "CWD_CHANGE", True
+    elif runner_changed:
+        return "INTERPRETER_OR_RUNNER_CHANGE", True
+    elif env_added:
+        return "ENVIRONMENT_INLINE_SETUP", True
+    elif has_state_mutation:
+        return "STATE_MUTATION", True
+    elif init_sig["raw"] != work_sig["raw"]:
+        if any(p in init_cmd for p in ['"', "'", "python -c", "node -e", "pwsh -c", "`"]) and not any(p in work_cmd for p in ["python -c", "node -e"]):
+            return "SYNTAX_OR_QUOTING_FIX", True
+        else:
+            return "FLAG_OR_ARGUMENT_ADJUSTMENT", True
+    else:
+        return "IDENTICAL_RETRY", True
+
+
+
 def parse_conversations(brain_dirs, candidate_repos, max_conversations=50, since_dt=None, target_repo=None, exclude_repo=None):
     sorted_repo_norms = sorted(list(candidate_repos.keys()), key=lambda x: len(x), reverse=True)
     conversations = []
@@ -414,18 +520,24 @@ def parse_conversations(brain_dirs, candidate_repos, max_conversations=50, since
                     "turn_index": turn_id,
                     "initial_step": act["step_index"],
                     "initial_command": act["command"],
+                    "initial_cwd": act["cwd"],
                     "category": cat,
                     "initial_exit_code": act["exit_code"],
                     "error_snippet": act["response_snippet"][:350],
                     "retries": [],
                     "intervening_file_writes": [],
+                    "intervening_discovery_commands": [],
                     "eventual_working_command": None,
+                    "eventual_working_cwd": None,
+                    "cwd_changed": False,
+                    "resolution_vector": "UNRESOLVED_OR_PIVOT",
                     "resolved": False
                 }
 
-                # Look forward up to 10 actions within the same or immediate next user turn
+                # Look forward up to 12 actions within the same or immediate next user turn
                 look_ahead_idx = k + 1
                 max_look = min(len(action_trace), k + 12)
+                intervening_cmds = []
                 while look_ahead_idx < max_look:
                     next_act = action_trace[look_ahead_idx]
                     # Stop if conversation progressed past next user turn
@@ -441,15 +553,28 @@ def parse_conversations(brain_dirs, candidate_repos, max_conversations=50, since
                             incident["retries"].append({
                                 "step_index": next_act["step_index"],
                                 "command": next_act["command"],
+                                "cwd": next_act["cwd"],
+                                "cwd_changed_from_initial": (norm_path(act["cwd"]) != norm_path(next_act["cwd"])) if (act["cwd"] and next_act["cwd"]) else False,
                                 "exit_code": next_act["exit_code"],
                                 "error_snippet": next_act["response_snippet"][:200]
                             })
+                            intervening_cmds.append(next_act["command"])
                         else:
-                            # Successful command reached within the turn
-                            incident["eventual_working_command"] = next_act["command"]
-                            incident["resolved"] = True
-                            k = look_ahead_idx
-                            break
+                            # Evaluate whether next_act is a genuine causal resolution
+                            rvec, is_valid_resolution = classify_resolution_vector(
+                                act, next_act, incident["intervening_file_writes"], intervening_cmds
+                            )
+                            if is_valid_resolution:
+                                incident["eventual_working_command"] = next_act["command"]
+                                incident["eventual_working_cwd"] = next_act["cwd"]
+                                incident["cwd_changed"] = (norm_path(act["cwd"]) != norm_path(next_act["cwd"])) if (act["cwd"] and next_act["cwd"]) else False
+                                incident["resolution_vector"] = rvec
+                                incident["resolved"] = True
+                                k = look_ahead_idx
+                                break
+                            else:
+                                incident["intervening_discovery_commands"].append(next_act["command"])
+                                intervening_cmds.append(next_act["command"])
                     look_ahead_idx += 1
 
                 incident["retry_count"] = len(incident["retries"])
@@ -614,10 +739,26 @@ def run_audit(output_dir=None, max_conversations=50, since_date=None, target_rep
     all_incidents.sort(key=lambda x: (x["retry_count"], 1 if not x["resolved"] else 0), reverse=True)
     high_friction_incidents = [inc for inc in all_incidents if inc["retry_count"] >= 1 or not inc["resolved"]]
 
+    # Aggregate resolution mechanisms
+    resolutions_by_vector = Counter()
+    cwd_changes_in_chains = 0
+    for inc in all_incidents:
+        if inc["resolved"]:
+            resolutions_by_vector[inc.get("resolution_vector", "FLAG_OR_ARGUMENT_ADJUSTMENT")] += 1
+            if inc.get("cwd_changed"):
+                cwd_changes_in_chains += 1
+        else:
+            resolutions_by_vector["UNRESOLVED_OR_PIVOT"] += 1
+
     print(f"\nTotal Commands Executed: {total_commands}")
     print(f"Total Command Failures: {total_failures} ({failure_rate:.2f}% failure rate)")
     print(f"Total Incident Chains: {len(all_incidents)}")
     print(f"High-Friction Loops (Retries > 0 or Unresolved): {len(high_friction_incidents)}")
+    print(f"Working-Directory Shifts in Chains: {cwd_changes_in_chains}")
+
+    print("\nResolution Mechanisms & Environmental Root Causes:")
+    for rvec, count in resolutions_by_vector.most_common():
+        print(f"  - {rvec}: {count} ({(count / len(all_incidents) * 100):.1f}%)" if all_incidents else f"  - {rvec}: {count}")
 
     print("\nFailures by Category:")
     for cat, count in failures_by_category.most_common():
@@ -643,6 +784,8 @@ def run_audit(output_dir=None, max_conversations=50, since_date=None, target_rep
             "failure_rate_pct": round(failure_rate, 2),
             "total_incident_chains": len(all_incidents),
             "high_friction_count": len(high_friction_incidents),
+            "cwd_changes_in_chains": cwd_changes_in_chains,
+            "resolutions_by_vector": dict(resolutions_by_vector),
             "failures_by_category": dict(failures_by_category),
             "failures_by_repo": dict(failures_by_repo),
             "high_friction_incidents": high_friction_incidents[:30],

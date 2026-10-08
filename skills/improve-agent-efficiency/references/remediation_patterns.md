@@ -66,6 +66,12 @@ Layer 3: Workspace Rules (<repo_root>/AGENTS.md)
 - **Remediation:**
   - Codify interpreter prefixes in rules (e.g. `bash ./script.sh` or explicit `chmod +x` prior to invocation).
 
+### Archetype 7: Working Directory & Monorepo Path Misalignments
+- **Symptoms:** `fatal: not a git repository`, `ENOENT: no such file or directory`, `collected 0 items`.
+- **Root Cause:** Commands targeting project manifests (such as `package.json`, `Cargo.toml`, or `pyproject.toml`) or tests executed from the repository root instead of the relevant package subdirectory.
+- **Remediation:**
+  - Specify explicit working directory requirements in `<repo_root>/AGENTS.md` (e.g., prescribing that test runners or build commands execute with explicit `Cwd` targeting the subfolder).
+
 ---
 
 ## 3. Workspace Rule Templates (`AGENTS.md`)
