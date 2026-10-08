@@ -1,21 +1,35 @@
 ---
 name: improve-agent-efficiency
-description: Probes host development tools, mines causal command failure chains across past agent sessions, and executes verified remediation across host binaries, global rules, and workspace AGENTS.md files.
+description: Probes host development tools, mines causal command failure chains across past agent sessions, measures token burn and efficiency gains, and executes verified remediation across host binaries, global rules, and workspace AGENTS.md files.
 ---
 
 # Improve Agent Efficiency
 
-This skill audits agent conversation histories in Antigravity, detects execution friction and multi-turn retry loops, probes the live host environment for tool discrepancies, and executes verified systemic remediations.
+This skill audits agent conversation histories in Antigravity, detects execution friction and multi-turn retry loops, probes the live host environment for tool discrepancies, evaluates comparative efficiency gains and token burn over time, and executes verified systemic remediations.
 
 ---
 
 ## Direct Chat Prompts
 
-The user can invoke this workflow directly from the chat interface with prompts such as:
+The workflow supports two distinct operational modes depending on user intent:
+
+### Mode A: Status, Efficiency Gains & Token Burn Check (Read-Only)
+When the user wants to inspect recent performance or verify if previous remediations worked:
+- *"Check our efficiency status and token burn over the last 24 hours."*
+- *"Analyze our efficiency gains since yesterday."*
+- *"Did our recent rule updates reduce command failures and token burn?"*
+- *"Show me token expenditure and command failure metrics since last week."*
+
+**Fast Execution Path:** Run `audit_trajectories.py (Get-Location).Path --since <YYYY-MM-DD> --compare` (or `--since 24h`), report the comparative delta table directly to the user, and complete the turn without running unnecessary host probes or modifying configurations.
+
+### Mode B: Deep Friction Audit & Tri-Layer Remediation
+When the user wants to identify recurring errors, eliminate multi-turn loops, or update configurations:
 - *"Audit my past sessions and optimize agent rules."*
 - *"Check my command failure rate across past trajectories and update workspace AGENTS.md."*
 - *"Analyze execution friction across my projects and recommend host tooling fixes."*
 - *"Probe my host environment and identify discrepancies in my agent configuration."*
+
+**Full Remediation Path:** Follow the sequential phases below (Inventory -> Probe -> Deep Audit -> Sampling -> Remediation -> Verification).
 
 ---
 
@@ -29,8 +43,8 @@ The workflow operates across six distinct phases:
 2. **Host Environment Probe (Local Script):**
    `scripts/probe_environment.py` inspects the live host runtime, verifies installed CLI binaries (`git`, `gh`, `rg`, `python`, `dotnet`, `node`, `cargo`), tests standard output stream encoding, and cross-references active rules in `GEMINI.md` to identify false negative claims.
 
-3. **Causal Trajectory Mining (Local Script):**
-   `scripts/audit_trajectories.py` parses conversation logs, matches sessions to repositories via dynamic git discovery, and reconstructs multi-turn incident chains (`initial failed command -> intermediate retries / file writes -> eventual working resolution`).
+3. **Causal Trajectory Mining & Gains Auditor (Local Script):**
+   `scripts/audit_trajectories.py` parses conversation logs, matches sessions to repositories via dynamic git discovery, disambiguates benign zero-match searches (`rg`, `findstr`, `grep`), reconstructs multi-turn incident chains (`initial failed command -> intermediate retries / file writes -> eventual working resolution`), and measures token burn and context metrics.
 
 4. **Targeted Forensic Sampling (Agent Reasoning):**
    For the highest-friction incident chains, the agent uses bounded `view_file` calls directly on `transcript.jsonl` to inspect the original prompt intent, raw error tracebacks, and tool execution context.
@@ -48,7 +62,12 @@ The workflow operates across six distinct phases:
 ### Phase 0: Scoping & Discovery Gate
 
 1. **Explicit Prompt Intent Check:**
-   If the user prompt already designates a target repository (e.g. *"Audit Caster"*) or specific time window (e.g. *"since last week"*), bypass the interactive prompt and execute Phase 1 directly with `--repo <name>` or `--since <date>`.
+   - If the user asks for a **status check, efficiency gains, or token burn**, immediately execute the **Mode A** fast path:
+     ```pwsh
+     py -3.10 "$SkillScripts\audit_trajectories.py" (Get-Location).Path --since <YYYY-MM-DD> --compare
+     ```
+     Present findings and finish without running Phase 1-5.
+   - If the user designates a target repository (e.g. *"Audit Caster"*) or specific time window (e.g. *"since last week"*), bypass the interactive prompt and execute Phase 1 directly with `--repo <name>` or `--since <date>`.
 
 2. **Rapid Inventory Discovery (< 2 seconds):**
    If invoked bare (e.g. `/improve-agent-efficiency`), execute the rapid inventory discovery mode:
@@ -56,7 +75,7 @@ The workflow operates across six distinct phases:
    ```pwsh
    # Windows (PowerShell)
    $SkillScripts = "C:\Users\Amir\.gemini\config\skills\improve-agent-efficiency\scripts"
-   python "$SkillScripts\audit_trajectories.py" (Get-Location).Path --inventory-only
+   py -3.10 "$SkillScripts\audit_trajectories.py" (Get-Location).Path --inventory-only
    ```
 
    ```bash
@@ -83,8 +102,8 @@ Execute both diagnostic tools using the scoped arguments:
 ```pwsh
 # Windows (PowerShell)
 $SkillScripts = "C:\Users\Amir\.gemini\config\skills\improve-agent-efficiency\scripts"
-python "$SkillScripts\probe_environment.py" (Get-Location).Path
-python "$SkillScripts\audit_trajectories.py" (Get-Location).Path --since <YYYY-MM-DD> --repo <target_repo>
+py -3.10 "$SkillScripts\probe_environment.py" (Get-Location).Path
+py -3.10 "$SkillScripts\audit_trajectories.py" (Get-Location).Path --since <YYYY-MM-DD> --repo <target_repo>
 ```
 
 ```bash
@@ -96,14 +115,16 @@ python3 "$SkillScripts/audit_trajectories.py" "$(pwd)" --since <YYYY-MM-DD> --re
 
 #### Supported Mining Flags
 - `--since YYYY-MM-DD`: Restrict audit to sessions on or after a specific date. Useful for measuring the impact of recent rule updates.
+- `--compare`: Compare the target time window against baseline history, outputting side-by-side deltas for failure rate, friction loops, token burn per turn/session, and unbounded file view ratios.
 - `--repo <keyword>`: Restrict audit to sessions associated with a specific repository name.
 - `--exclude <name1,name2>`: Exclude specific repositories from the audit.
 - `--all`: Parse all discovered sessions without conversation count limits.
 - `--limit <N>`: Maximum recent conversations to evaluate (default: 100).
+- `--inventory-only`: Rapid repository inventory scan without parsing transcripts (<2 seconds).
 
 The diagnostic run produces two artifacts in the working directory:
 - `host_environment_probe.json`: Live binary inventory, stdout encoding status, and rule discrepancies.
-- `trajectory_audit_summary.json`: Command failure counts, repository distribution, and extracted incident chains.
+- `trajectory_audit_summary.json`: Command failure counts, token burn estimations, repository distribution, and extracted incident chains.
 
 ### Phase 2: Review Diagnostic Outputs
 
