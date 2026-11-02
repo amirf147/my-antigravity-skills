@@ -47,7 +47,7 @@ The workflow operates across six distinct phases:
    `scripts/audit_trajectories.py` parses conversation logs, matches sessions to repositories via dynamic git discovery, disambiguates benign zero-match searches (`rg`, `findstr`, `grep`), reconstructs multi-turn incident chains (`initial failed command -> intermediate retries / file writes -> eventual working resolution`), and measures token burn and context metrics.
 
 4. **Targeted Forensic Sampling (Agent Reasoning):**
-   For the highest-friction incident chains, the agent uses bounded `view_file` calls directly on `transcript.jsonl` to inspect the original prompt intent, raw error tracebacks, and tool execution context.
+   For the highest-friction incident chains, the agent uses bounded `read_file` calls directly on `transcript.jsonl` to inspect the original prompt intent, raw error tracebacks, and tool execution context.
 
 5. **Tri-Layer Remediation Synthesis (Agent Execution):**
    Interventions are partitioned into Host Tooling (package manager installs), Global Rules (`~/.gemini/config/GEMINI.md`), and Workspace Rules (`<repo_root>/AGENTS.md`).
@@ -74,13 +74,13 @@ The workflow operates across six distinct phases:
 
    ```pwsh
    # Windows (PowerShell)
-   $SkillScripts = "$HOME\.gemini\config\skills\improve-agent-efficiency\scripts"
+   $SkillScripts = if (Test-Path ".\skills\improve-agent-efficiency\scripts") { ".\skills\improve-agent-efficiency\scripts" } else { "$HOME\.gemini\config\skills\improve-agent-efficiency\scripts" }
    py -3.10 "$SkillScripts\audit_trajectories.py" (Get-Location).Path --inventory-only
    ```
 
    ```bash
    # macOS / Linux (POSIX)
-   SkillScripts="$HOME/.gemini/config/skills/improve-agent-efficiency/scripts"
+   SkillScripts="$([ -d "./skills/improve-agent-efficiency/scripts" ] && echo "./skills/improve-agent-efficiency/scripts" || echo "$HOME/.gemini/config/skills/improve-agent-efficiency/scripts")"
    python3 "$SkillScripts/audit_trajectories.py" "$(pwd)" --inventory-only
    ```
 
@@ -101,14 +101,14 @@ Execute both diagnostic tools using the scoped arguments:
 
 ```pwsh
 # Windows (PowerShell)
-$SkillScripts = "$HOME\.gemini\config\skills\improve-agent-efficiency\scripts"
+$SkillScripts = if (Test-Path ".\skills\improve-agent-efficiency\scripts") { ".\skills\improve-agent-efficiency\scripts" } else { "$HOME\.gemini\config\skills\improve-agent-efficiency\scripts" }
 py -3.10 "$SkillScripts\probe_environment.py" (Get-Location).Path
 py -3.10 "$SkillScripts\audit_trajectories.py" (Get-Location).Path --since <YYYY-MM-DD> --repo <target_repo>
 ```
 
 ```bash
 # macOS / Linux (POSIX)
-SkillScripts="$HOME/.gemini/config/skills/improve-agent-efficiency/scripts"
+SkillScripts="$([ -d "./skills/improve-agent-efficiency/scripts" ] && echo "./skills/improve-agent-efficiency/scripts" || echo "$HOME/.gemini/config/skills/improve-agent-efficiency/scripts")"
 python3 "$SkillScripts/probe_environment.py" "$(pwd)"
 python3 "$SkillScripts/audit_trajectories.py" "$(pwd)" --since <YYYY-MM-DD> --repo <target_repo>
 ```

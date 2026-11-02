@@ -20,7 +20,7 @@ Use this skill when onboarding, auditing, or configuring a public repository to 
 ### Phase 1: Pre-Audit Existing Workspace
 Before scaffolding hooks, inspect current repository health:
 1. Verify repository root via `git rev-parse --show-toplevel`.
-2. Execute the scanner in audit mode across all tracked files:
+2. Execute the scanner in audit mode across all tracked files (if `scripts/check_repo_safety.py` is not yet deployed in the workspace root, run it directly from the skill directory or copy the script first):
    ```bash
    python scripts/check_repo_safety.py
    ```

@@ -348,7 +348,7 @@ def parse_conversations(brain_dirs, candidate_repos, max_conversations=50, since
                 if not isinstance(args, dict):
                     continue
 
-                for k in ["Cwd", "TargetFile", "AbsolutePath"]:
+                for k in ["Cwd", "TargetFile", "AbsolutePath", "Path", "path"]:
                     v = args.get(k)
                     if v and isinstance(v, str):
                         np = norm_path(v)
@@ -361,15 +361,15 @@ def parse_conversations(brain_dirs, candidate_repos, max_conversations=50, since
                                     candidate_repos[gn] = git_root
                                     sorted_repo_norms = sorted(list(candidate_repos.keys()), key=lambda x: len(x), reverse=True)
 
-                if tname in ["write_to_file", "replace_file_content"]:
+                if tname in ["write_to_file", "replace_file_content", "write_file", "edit_file", "append_to_file"]:
                     action_trace.append({
                         "step_index": i,
                         "tool": tname,
-                        "target_file": clean_str(args.get("TargetFile")),
+                        "target_file": clean_str(args.get("TargetFile") or args.get("Path") or args.get("path")),
                         "is_command": False
                     })
 
-                elif tname == "view_file":
+                elif tname in ["view_file", "read_file"]:
                     file_views_count += 1
                     s_line = args.get("StartLine")
                     e_line = args.get("EndLine")
