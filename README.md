@@ -10,145 +10,85 @@ Skills can be mounted globally into `~/.gemini/config/skills/` (machine scope) o
 
 | Skill | Category | Platforms | Supported Stacks | Key Capability |
 | :--- | :--- | :--- | :--- | :--- |
-| [`improve-agent-efficiency`](./skills/improve-agent-efficiency/) | Diagnostics & Auditing | Linux, macOS, Windows | TypeScript/Node, Python, Go, Rust, .NET | Probes live host tooling, mines multi-turn causal incident chains, measures token burn and context metrics, evaluates efficiency gains over time, and synthesizes verified tri-layer remediations. |
-| [`public-repo-safety`](./skills/public-repo-safety/) | Security & Hygiene | Linux, macOS, Windows | Any (Language-agnostic Git & Python scanner) | Audits, scaffolds, and enforces pre-commit hooks and CI safety gates to prevent hardcoded local user paths (Windows C:\\Users, Unix /home), secrets, API keys, and binary blobs from being committed. |
+| [`improve-agent-efficiency`](./skills/improve-agent-efficiency/) | Diagnostics & Telemetry | Linux, macOS, Windows | Language-agnostic | Indexes hardware token usage (`input_tokens`, `cache_read_tokens`, `output_tokens`), inference turns per prompt, tool errors across commands and file edits, and search-to-edit thrash ratios for first-principles transcript analysis. |
+| [`public-repo-safety`](./skills/public-repo-safety/) | Security & Hygiene | Linux, macOS, Windows | Language-agnostic Git & Python scanner | Audits, scaffolds, and enforces pre-commit hooks and CI safety gates to prevent hardcoded local user paths (Windows `C:\Users\<user>`, Unix `/home/<user>`), secrets, API keys, and binary blobs from being committed. |
 
 ---
-
 
 ## Included Skills
 
 ### `improve-agent-efficiency`
 
-An automated diagnostic runbook and toolset that inspects past agent conversation transcripts, evaluates token burn and efficiency gains, detects execution friction and multi-turn retry loops, probes the live host environment for tool discrepancies, and executes verified systemic remediations.
+A neutral session telemetry indexer and first-principles diagnostic workflow. Rather than relying on hardcoded failure categories or rigid remediation templates that cause rule bloat, `scripts/audit_trajectories.py` collects objective hardware and tool telemetry across conversation transcripts so the agent can inspect outlier sessions directly and diagnose root causes on the fly.
 
-#### Core Diagnostic Utilities
+#### Core Capabilities (`scripts/audit_trajectories.py`)
 
-The skill bundles two standalone Python scripts in `scripts/`:
+- **Hardware Token Telemetry:** Extracts exact `input_tokens`, `cache_read_tokens`, `output_tokens`, cache hit rates, and peak context window sizes directly from `PLANNER_RESPONSE` steps in `transcript.jsonl`.
+- **Turn Multiplication & Thrash Detection:** Tracks model inference turns (`PLANNER_RESPONSE`) per user prompt, read/search-to-edit ratios, and `scratch/` script creation overhead (`scratch_writes` and `scratch_runs`).
+- **Comprehensive Tool Error Indexing:**
+  - Separates benign zero-match search queries (`rg`, `grep`, `findstr`, `diff` exiting with code 1) from actual command failures.
+  - Separates normal test and build verification cycles (`pytest`, `vitest`, `jest`, `cargo test`, `dotnet test`, `go test`, `tsc`) from unexpected shell errors.
+  - Captures non-command tool failures (`edit_file` target mismatches, relative path errors in `read_file` / `edit_file`, `write_file` collisions, and `manage_task` errors).
+- **Zero Repository Pollution:** Writes telemetry output to the system temporary directory (`$TEMP/agy_telemetry/telemetry_summary.json`) by default instead of leaving untracked artifacts in active repositories.
+- **Comparative Cohort Analysis (`--compare`):** Partitions sessions around `--since YYYY-MM-DD` (defaulting to the last 24 hours) to compare turn counts, failure rates, and scratch script usage against historical baselines.
 
-1. **Host Environment Probe (`scripts/probe_environment.py`):**
-   - Tests standard output stream encoding and verifies UTF-8 byte resilience.
-   - Inspects host availability and version strings for standard platform binaries (`git`, `gh`, `rg`, `pwsh`, `python`, `node`, `pnpm`, `go`, `cargo`, `dotnet`, `winget`, `brew`, `apt`).
-   - Cross-references detected binaries against global rules (`~/.gemini/config/GEMINI.md`) to detect discrepancies, such as tools marked absent in configuration that exist on PATH.
-   - Writes diagnostic output to `host_environment_probe.json`.
+#### Workflow
 
-2. **Causal Trajectory Auditor (`scripts/audit_trajectories.py`):**
-   - Parses local conversation transcripts across all discovered brain storage locations.
-   - **Zero-Match Query Disambiguation:** Distinguishes benign pattern searches (`rg`, `grep`, `findstr`, `diff` exiting with code 1) from actual runtime crashes, eliminating false failure alarms.
-   - **Native Token Burn Telemetry:** Estimates token burn across prompts, model responses, thinking tokens, and tool output streams; tracks bounded vs. unbounded file viewing ratios.
-   - **Comparative Efficiency Mode (`--compare`):** Partitions sessions into target and baseline windows to calculate exact deltas in failure rates, friction loops, and token burn per turn/session.
-   - Reconstructs multi-turn incident chains, tracking initial command failures, subsequent retries, intervening file writes, working-directory shifts (`Cwd`), and eventual working resolutions.
-   - Dynamically resolves Git repository roots from touched file paths.
-   - Features rapid inventory scanning (`--inventory-only`) to discover date boundaries and repository footprints in seconds without parsing transcripts.
-   - Supports temporal filtering (`--since YYYY-MM-DD`), repository targeting (`--repo <keyword>`), and negative filtering (`--exclude <name1,name2>`).
-   - Writes diagnostic output to `trajectory_audit_summary.json` or `trajectory_inventory.json`.
+1. **Index Telemetry:** Run `scripts/audit_trajectories.py` to generate `telemetry_summary.json` containing aggregate metrics, `top_cost_sessions`, `top_thrash_sessions`, and `recent_error_sessions`.
+2. **Inspect Outliers from First Principles:** Read bounded step slices in `<appDataDir>/brain/<conversation_id>/.system_generated/logs/transcript.jsonl` for the highest-cost or highest-thrash sessions.
+3. **Evaluate Rule ROI & Prune Overhead:** Identify whether existing rules in `~/.gemini/config/GEMINI.md` or `<repo_root>/AGENTS.md` are causing unnecessary tool calls (such as pre-read line counting, sequential chunking, or two-step scratch script writes) and simplify or remove counterproductive rules.
 
-#### Two Operational Modes
-
-##### Mode A: Read-Only Efficiency Gains & Token Burn Check
-Use when evaluating whether recent rule adjustments or environment updates worked:
-- *"Check our efficiency status and token burn over the last 24 hours."*
-- *"Analyze our efficiency gains since yesterday."*
-- *"Did our recent rule updates reduce command failures and token burn?"*
-
-The agent runs a single read-only command (`audit_trajectories.py <dir> --since <date> --compare`), reports the comparison table, and exits without modifying files.
-
-##### Mode B: Deep Friction Audit & Tri-Layer Remediation
-Use when discovering new friction, repairing broken tool paths, or writing new rules:
-- *"Audit my past sessions and optimize agent rules."*
-- *"Check my command failure rate across past trajectories and update workspace AGENTS.md."*
-
-Executes across six sequential phases:
-1. **Scoping & Discovery Gate:** Run rapid inventory scan (`--inventory-only`) and select scope.
-2. **Host Probe and Trajectory Mining:** Run `probe_environment.py` and `audit_trajectories.py`.
-3. **Diagnostic Output Review:** Inspect `host_environment_probe.json` and high-friction incidents.
-4. **Targeted Forensic Sampling:** Inspect bounded lines in `transcript.jsonl` around failure steps.
-5. **Tri-Layer Remediation Deployment:**
-   - **Host Tooling Layer:** Install missing platform binaries via package managers (`winget`, `brew`, `apt`) and configure persistent environment variables (`PYTHONIOENCODING=utf-8`).
-   - **Global Rules Layer (`~/.gemini/config/GEMINI.md`):** Correct platform binary declarations, enforce the File-First Execution SOP for multi-line logic, and maintain bounded output rules.
-   - **Workspace Rules Layer (`<repo_root>/AGENTS.md`):** Enforce runtime pinning, lockfile policies, build/test commands, and pre-build process termination.
-6. **Verification Gate:** Test all applied changes (`<binary> --version`, builds, and tests) before concluding.
-
----
-
-## Usage
-
-### Direct Chat Invocation
-
-Trigger the audit workflow directly from chat:
-
-```
-# Mode A: Status & Gains
-/improve-agent-efficiency check efficiency gains and token burn for the last 24 hours
-
-# Mode B: Full Audit & Remediation
-/improve-agent-efficiency audit my past sessions and optimize agent rules
-```
-
-### Manual CLI Execution
-
-Run the diagnostic scripts directly from the repository root:
+#### Usage
 
 ```pwsh
 # Windows (PowerShell)
-# 1. Comparative efficiency gains & token burn audit (last 24 hours)
-python ./skills/improve-agent-efficiency/scripts/audit_trajectories.py (Get-Location).Path --since 2026-10-07 --compare
+$Script = "$HOME\.gemini\config\skills\improve-agent-efficiency\scripts\audit_trajectories.py"
 
-# 2. Rapid repository inventory (<2 seconds)
-python ./skills/improve-agent-efficiency/scripts/audit_trajectories.py (Get-Location).Path --inventory-only
+# Index recent 100 sessions
+py -3.10 $Script --limit 100
 
-# 3. Deep diagnostic probe & trajectory audit
-python ./skills/improve-agent-efficiency/scripts/probe_environment.py (Get-Location).Path
-python ./skills/improve-agent-efficiency/scripts/audit_trajectories.py (Get-Location).Path --limit 50 --exclude temp-repo
+# Index all sessions across history
+py -3.10 $Script --all
+
+# Compare sessions since a specific date against baseline
+py -3.10 $Script --since 2026-11-01 --compare
 ```
 
 ```bash
 # macOS / Linux (POSIX)
-# 1. Comparative efficiency gains & token burn audit (last 24 hours)
-python3 ./skills/improve-agent-efficiency/scripts/audit_trajectories.py "$(pwd)" --since 2026-10-07 --compare
-
-# 2. Rapid repository inventory (<2 seconds)
-python3 ./skills/improve-agent-efficiency/scripts/audit_trajectories.py "$(pwd)" --inventory-only
-
-# 3. Deep diagnostic probe & trajectory audit
-python3 ./skills/improve-agent-efficiency/scripts/probe_environment.py "$(pwd)"
-python3 ./skills/improve-agent-efficiency/scripts/audit_trajectories.py "$(pwd)" --limit 50 --exclude temp-repo
+Script="$HOME/.gemini/config/skills/improve-agent-efficiency/scripts/audit_trajectories.py"
+python3 "$Script" --limit 100
 ```
 
-### Command-Line Arguments
-
-The `audit_trajectories.py` script supports the following filtering parameters:
+#### Command-Line Arguments
 
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `output_dir` | Positional | Current Directory | Target directory for generated JSON reports |
-| `--compare` | Flag | `False` | Compare target window against baseline history and compute efficiency gains / token burn deltas |
-| `--since` | String (`YYYY-MM-DD`) | `None` | Restrict parsing to sessions recorded on or after this date (or start of target window) |
-| `--limit` | Integer | `100` | Maximum number of recent conversations to parse |
-| `--repo` | String | `None` | Filter parsing to sessions matching a repository substring |
-| `--exclude` | String | `None` | Comma-separated list of repository names to exclude from parsing |
-| `--all` | Flag | `False` | Parse all discovered conversations across all storage locations |
-| `--inventory-only` | Flag | `False` | Discover repositories and date boundaries rapidly without parsing transcripts |
+| `output_dir` | Positional | `$TEMP/agy_telemetry` | Directory where `telemetry_summary.json` is written |
+| `--limit` | Integer | `100` | Maximum number of recent conversations to index |
+| `--all` | Flag | `False` | Index all discovered conversations without limit |
+| `--since` | String (`YYYY-MM-DD`) | `None` | Filter conversations modified on or after date |
+| `--repo` | String | `None` | Filter conversations matching a repository name substring |
+| `--exclude` | String | `None` | Comma-separated list of repository names to exclude |
+| `--compare` | Flag | `False` | Compare target cohort since `--since` against prior baseline |
 
-The `probe_environment.py` script accepts an optional positional `output_dir` parameter.
+---
 
-### Diagnostic Artifacts
+### `public-repo-safety`
 
-The scripts generate structured JSON artifacts in the specified output directory:
+An automated security and hygiene runbook for public and open-source repositories. Scaffolds pre-commit interception hooks, portable scanners, and GitHub Actions CI gates to prevent data leakage, user path disclosure, and accidental credential commits.
 
-| Artifact | Generated By | Primary Contents |
-| :--- | :--- | :--- |
-| `trajectory_inventory.json` | `audit_trajectories.py --inventory-only` | Total conversation count, earliest/latest session dates, active workspace info, and list of discovered git repositories |
-| `host_environment_probe.json` | `probe_environment.py` | Platform details, Python stream encoding status, installed binary inventory, and configuration discrepancies against `GEMINI.md` |
-| `trajectory_audit_summary.json` | `audit_trajectories.py` | Aggregate command failure metrics, token burn metrics, category breakdowns, resolution vector distributions, comparative gains (with `--compare`), and extracted incident chains |
+#### Core Capabilities
+- **Local Path Hygiene:** Detects Windows user paths (`C:\Users\<user>`), Unix user home paths (`/home/<user>`, `/Users/<user>`), active username fragments, and local `file:///` URIs.
+- **Credential & Secret Interception:** Flags private key headers, provider API tokens, GitHub personal access tokens, JWT tokens, and unredacted personal email addresses.
+- **Binary Artifact Gate:** Blocks tracking of compiled binaries, objects, and unmanaged archives (`.dll`, `.exe`, `.so`, `.zip`, `.pyc`).
+- **Three-Tier Enforcement:** Deploys a standalone scanner (`scripts/check_repo_safety.py`), local Git hook interception (`.git/hooks/pre-commit`, `.pre-commit-config.yaml`), and GitHub Actions CI verification (`.github/workflows/ci.yml`).
 
 ---
 
 ## Installation
 
 ### Global Installation (Machine Scope)
-
-Mount a skill globally so it is available across all workspaces:
 
 ```bash
 # macOS & Linux
@@ -164,8 +104,6 @@ Copy-Item -Path ".\skills\improve-agent-efficiency" -Destination $dest -Recurse 
 
 ### Workspace Installation (Project Scope)
 
-Vendor a skill directly into a repository to share it with a specific project:
-
 ```bash
 # macOS & Linux
 mkdir -p <project_root>/.agents/skills
@@ -177,17 +115,3 @@ cp -r ./skills/improve-agent-efficiency <project_root>/.agents/skills/
 $dest = "<project_root>\.agents\skills\improve-agent-efficiency"
 Copy-Item -Path ".\skills\improve-agent-efficiency" -Destination $dest -Recurse -Force
 ```
-
-### `public-repo-safety`
-
-An automated security and hygiene runbook for public and open-source repositories. Scaffolds pre-commit interception hooks, portable scanners, and GitHub Actions CI gates to prevent data leakage, user path disclosure, and accidental credential commits.
-
-#### Core Capabilities
-- **Local Path Hygiene:** Detects Windows user paths (`C:\\Users\\...`), Unix user home paths (`/home/...`, `/Users/...`), active username fragments, and local `file:///` URIs.
-- **Credential & Secret Interception:** Flags private key headers, provider API tokens, GitHub personal access tokens, JWT tokens, and unredacted personal email addresses.
-- **Binary Artifact Gate:** Blocks tracking of compiled binaries, objects, and unmanaged archives (`.dll`, `.exe`, `.so`, `.zip`, `.pyc`).
-- **Three-Tier Enforcement:** Deploys a standalone scanner (`scripts/check_repo_safety.py`), local Git hook interception (`.git/hooks/pre-commit`, `.pre-commit-config.yaml`), and GitHub Actions CI verification (`.github/workflows/ci.yml`).
-
-#### Known Limitations & Caveats
-- Requires Python 3.10+ and Git CLI on the host machine.
-- For intentional test fixtures or mock payloads, bypass inspection on specific lines by appending `# nosec` or `# allow-path`.

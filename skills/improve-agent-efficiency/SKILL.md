@@ -1,175 +1,41 @@
 ---
 name: improve-agent-efficiency
-description: Probes host development tools, mines causal command failure chains across past agent sessions, measures token burn and efficiency gains, and executes verified remediation across host binaries, global rules, and workspace AGENTS.md files.
+description: Indexes conversation telemetry (hardware token counts, inference turns, tool failures, and search-to-edit thrash) across sessions so the agent can inspect outlier transcripts and recommend first-principles improvements.
 ---
 
 # Improve Agent Efficiency
 
-This skill audits agent conversation histories in Antigravity, detects execution friction and multi-turn retry loops, probes the live host environment for tool discrepancies, evaluates comparative efficiency gains and token burn over time, and executes verified systemic remediations.
+This skill indexes objective telemetry from Antigravity `transcript.jsonl` logs and directs the agent to inspect outlier sessions directly. The script acts strictly as a neutral telemetry indexer; diagnosis and recommendations are performed dynamically by the agent from first principles.
 
 ---
 
-## Direct Chat Prompts
+## 1. Run the Telemetry Indexer
 
-The workflow supports two distinct operational modes depending on user intent:
-
-### Mode A: Status, Efficiency Gains & Token Burn Check (Read-Only)
-When the user wants to inspect recent performance or verify if previous remediations worked:
-- *"Check our efficiency status and token burn over the last 24 hours."*
-- *"Analyze our efficiency gains since yesterday."*
-- *"Did our recent rule updates reduce command failures and token burn?"*
-- *"Show me token expenditure and command failure metrics since last week."*
-
-**Fast Execution Path:** Run `audit_trajectories.py (Get-Location).Path --since <YYYY-MM-DD> --compare` (or `--since 24h`), report the comparative delta table directly to the user, and complete the turn without running unnecessary host probes or modifying configurations.
-
-### Mode B: Deep Friction Audit & Tri-Layer Remediation
-When the user wants to identify recurring errors, eliminate multi-turn loops, or update configurations:
-- *"Audit my past sessions and optimize agent rules."*
-- *"Check my command failure rate across past trajectories and update workspace AGENTS.md."*
-- *"Analyze execution friction across my projects and recommend host tooling fixes."*
-- *"Probe my host environment and identify discrepancies in my agent configuration."*
-
-**Full Remediation Path:** Follow the sequential phases below (Inventory -> Probe -> Deep Audit -> Sampling -> Remediation -> Verification).
-
----
-
-## Architecture: Fast Probing, Causal Mining, and Verified Remediation
-
-The workflow operates across six distinct phases:
-
-1. **Scoping & Discovery Gate (Interactive Selection):**
-   When invoked without arguments, a fast inventory scan enumerates repositories and date boundaries. The agent uses `ask_question` to let the user select the target project scope and time window before deep parsing begins.
-
-2. **Host Environment Probe (Local Script):**
-   `scripts/probe_environment.py` inspects the live host runtime, verifies installed CLI binaries (`git`, `gh`, `rg`, `python`, `dotnet`, `node`, `cargo`), tests standard output stream encoding, and cross-references active rules in `GEMINI.md` to identify false negative claims.
-
-3. **Causal Trajectory Mining & Gains Auditor (Local Script):**
-   `scripts/audit_trajectories.py` parses conversation logs, matches sessions to repositories via dynamic git discovery, disambiguates benign zero-match searches (`rg`, `findstr`, `grep`), reconstructs multi-turn incident chains (`initial failed command -> intermediate retries / file writes -> eventual working resolution`), and measures token burn and context metrics.
-
-4. **Targeted Forensic Sampling (Agent Reasoning):**
-   For the highest-friction incident chains, the agent uses bounded `read_file` calls directly on `transcript.jsonl` to inspect the original prompt intent, raw error tracebacks, and tool execution context.
-
-5. **Tri-Layer Remediation Synthesis (Agent Execution):**
-   Interventions are partitioned into Host Tooling (package manager installs), Global Rules (`~/.gemini/config/GEMINI.md`), and Workspace Rules (`<repo_root>/AGENTS.md`).
-
-6. **Verification Gate (Live Execution):**
-   All applied environment configurations, shell rules, or workspace settings are tested using verification commands before completing the turn.
-
----
-
-## Operational Procedure
-
-### Phase 0: Scoping & Discovery Gate
-
-1. **Explicit Prompt Intent Check:**
-   - If the user asks for a **status check, efficiency gains, or token burn**, immediately execute the **Mode A** fast path:
-     ```pwsh
-     py -3.10 "$SkillScripts\audit_trajectories.py" (Get-Location).Path --since <YYYY-MM-DD> --compare
-     ```
-     Present findings and finish without running Phase 1-5.
-   - If the user designates a target repository (e.g. *"Audit Caster"*) or specific time window (e.g. *"since last week"*), bypass the interactive prompt and execute Phase 1 directly with `--repo <name>` or `--since <date>`.
-
-2. **Rapid Inventory Discovery (< 2 seconds):**
-   If invoked bare (e.g. `/improve-agent-efficiency`), execute the rapid inventory discovery mode:
-
-   ```pwsh
-   # Windows (PowerShell)
-   $SkillScripts = if (Test-Path ".\skills\improve-agent-efficiency\scripts") { ".\skills\improve-agent-efficiency\scripts" } else { "$HOME\.gemini\config\skills\improve-agent-efficiency\scripts" }
-   py -3.10 "$SkillScripts\audit_trajectories.py" (Get-Location).Path --inventory-only
-   ```
-
-   ```bash
-   # macOS / Linux (POSIX)
-   SkillScripts="$([ -d "./skills/improve-agent-efficiency/scripts" ] && echo "./skills/improve-agent-efficiency/scripts" || echo "$HOME/.gemini/config/skills/improve-agent-efficiency/scripts")"
-   python3 "$SkillScripts/audit_trajectories.py" "$(pwd)" --inventory-only
-   ```
-
-3. **Interactive Scoping Modal (`ask_question`):**
-   Read `trajectory_inventory.json` and call `ask_question` with discovered options pre-populated:
-   - **Repository Scope:**
-     - `(Recommended) Current workspace only (<current_repo>)`
-     - `Top active repositories (<top_3_repos>)`
-     - `Full system sweep (all repositories)`
-   - **Time Window:**
-     - `(Recommended) Recent history (last 14 days)`
-     - `Medium history (last 30 days)`
-     - `Full lifetime history`
-
-### Phase 1: Execute Host Probe and Trajectory Mining
-
-Execute both diagnostic tools using the scoped arguments:
+Execute `scripts/audit_trajectories.py` to aggregate hardware token usage (`input_tokens`, `cache_read_tokens`, `output_tokens`), inference turns, tool call errors (across both shell commands and file/edit tools), and search-to-edit ratios. Output is written to the system temp directory (`$env:TEMP\agy_telemetry\telemetry_summary.json`) so repository roots are never polluted.
 
 ```pwsh
-# Windows (PowerShell)
-$SkillScripts = if (Test-Path ".\skills\improve-agent-efficiency\scripts") { ".\skills\improve-agent-efficiency\scripts" } else { "$HOME\.gemini\config\skills\improve-agent-efficiency\scripts" }
-py -3.10 "$SkillScripts\probe_environment.py" (Get-Location).Path
-py -3.10 "$SkillScripts\audit_trajectories.py" (Get-Location).Path --since <YYYY-MM-DD> --repo <target_repo>
+$Script = "$HOME\.gemini\config\skills\improve-agent-efficiency\scripts\audit_trajectories.py"
+py -3.10 $Script --limit 100
 ```
 
-```bash
-# macOS / Linux (POSIX)
-SkillScripts="$([ -d "./skills/improve-agent-efficiency/scripts" ] && echo "./skills/improve-agent-efficiency/scripts" || echo "$HOME/.gemini/config/skills/improve-agent-efficiency/scripts")"
-python3 "$SkillScripts/probe_environment.py" "$(pwd)"
-python3 "$SkillScripts/audit_trajectories.py" "$(pwd)" --since <YYYY-MM-DD> --repo <target_repo>
-```
+### Optional Flags
+- `--since YYYY-MM-DD`: Filter sessions modified on or after date.
+- `--compare`: Partition sessions at `--since` (defaults to 24h ago) to compare recent sessions against prior baseline.
+- `--repo <substring>`: Filter to sessions matching a repository name.
+- `--exclude <name1,name2>`: Exclude specific repositories.
+- `--limit <N>` / `--all`: Control how many recent sessions to index (default: 100).
 
-#### Supported Mining Flags
-- `--since YYYY-MM-DD`: Restrict audit to sessions on or after a specific date. Useful for measuring the impact of recent rule updates.
-- `--compare`: Compare the target time window against baseline history, outputting side-by-side deltas for failure rate, friction loops, token burn per turn/session, and unbounded file view ratios.
-- `--repo <keyword>`: Restrict audit to sessions associated with a specific repository name.
-- `--exclude <name1,name2>`: Exclude specific repositories from the audit.
-- `--all`: Parse all discovered sessions without conversation count limits.
-- `--limit <N>`: Maximum recent conversations to evaluate (default: 100).
-- `--inventory-only`: Rapid repository inventory scan without parsing transcripts (<2 seconds).
+---
 
-The diagnostic run produces two artifacts in the working directory:
-- `host_environment_probe.json`: Live binary inventory, stdout encoding status, and rule discrepancies.
-- `trajectory_audit_summary.json`: Command failure counts, token burn estimations, repository distribution, and extracted incident chains.
+## 2. Inspect Outliers & Diagnose from First Principles
 
-### Phase 2: Review Diagnostic Outputs
+Read `$env:TEMP\agy_telemetry\telemetry_summary.json` and review the flagged outlier sessions (`top_cost_sessions`, `top_thrash_sessions`, and `recent_error_chains`).
 
-Read both generated JSON artifacts using bounded file reading:
+For the highest-signal outlier sessions, read the relevant step ranges in `<appDataDir>/brain/<conversation_id>/.system_generated/logs/transcript.jsonl` and evaluate:
 
-1. **Inspect Host Findings:**
-   Check `host_environment_probe.json` for missing standard tools (`rg`, `gh`, `dotnet`, runtimes) and encoding errors. Flag any tools that are installed on the system but prohibited or declared absent in `GEMINI.md`.
-
-2. **Inspect High-Friction Incident Chains:**
-   Review `high_friction_incidents` in `trajectory_audit_summary.json`. Focus on incidents exhibiting:
-   - `retry_count >= 1`: Multi-step trial-and-error attempts before finding a working command.
-   - `resolved: false`: Unhandled command failures that blocked completion.
-   - `intervening_file_writes`: Cases where the agent had to write a disk script to bypass shell quoting issues.
-
-### Phase 3: Targeted Forensic Sampling
-
-When an incident category shows recurring friction (such as process file locks, module import errors, or encoding crashes), sample the raw conversation log to understand the full context:
-
-1. Identify the `conversation_id` and `initial_step` from the incident record.
-2. Locate the transcript file at:
-   `<appDataDir>/brain/<conversation_id>/.system_generated/logs/transcript.jsonl`
-3. Execute bounded file inspection around the failure step index to review the exact error stack and model reasoning.
-
-### Phase 4: Tri-Layer Remediation Deployment
-
-Apply corrective measures categorized across three distinct layers:
-
-1. **Host Tooling Layer (Zero Token Overhead):**
-   - Install missing CLI utilities requested by agents using native package managers (`winget install --id <Id>`, `brew install <pkg>`).
-   - Set persistent environment variables for terminal streams (e.g., `[Environment]::SetEnvironmentVariable("PYTHONIOENCODING", "utf-8", "User")`).
-
-2. **Global Rules Layer (`~/.gemini/config/GEMINI.md`):**
-   - Correct false statements regarding installed platform binaries.
-   - Enforce the File-First Execution SOP for multi-line logic (`py -c`, `node -e`).
-   - Enforce bounded reading and bounded command output limits.
-
-3. **Workspace Rules Layer (`<repo_root>/AGENTS.md`):**
-   - Reference [references/remediation_patterns.md](references/remediation_patterns.md) for language-specific templates.
-   - Codify runtime pinning (`python`), explicit `PYTHONPATH` exports, solution file targets (`.slnx`), pre-build process termination, and test invocation commands.
-
-### Phase 5: Verification Gate
-
-Validate all applied changes before concluding the task:
-
-1. For host tool installations: Run `<binary> --version` to verify exit code 0.
-2. For environment variables: Run a test command verifying the variable is active in child processes.
-3. For workspace rules: Verify test runner commands and build commands execute cleanly against the target repository.
-4. Format findings, incident comparisons, and verified actions into a final Markdown artifact for user review.
+1. **Context & Turn Multiplication:**
+   Identify what caused excessive `PLANNER_RESPONSE` turns per user prompt (e.g., fragmented file reads, avoidable two-step scratch script writes, or lack of codebase orientation).
+2. **True Tool Friction vs. Normal Engineering:**
+   Separate normal red-green test/build cycles from avoidable friction (broken shell syntax, failed `edit_file` target matches, wrong working directories, or missing CLI tools).
+3. **Rule ROI & Pruning:**
+   Check whether existing rules in `~/.gemini/config/GEMINI.md` or `<repo_root>/AGENTS.md` are actively causing extra turns, tool errors, or prompt bloat. Recommend **removing or simplifying rules** whenever a rule imposes more turn overhead than it saves.
